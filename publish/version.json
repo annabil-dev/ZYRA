@@ -1,4 +1,4 @@
 {
-    "version": "v1.0.23",
-    "description": "Hotfix: Changed attachment button icon to a plus symbol for better rendering"
+    "version": "v1.0.24",
+    "description": "Hotfix: Fixed attachment button rendering as a square"
 }

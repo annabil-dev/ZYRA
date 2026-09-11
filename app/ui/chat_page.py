@@ -182,8 +182,19 @@ class ChatPage(QWidget):
         self.attach_btn.setFixedSize(32, 32)
         self.attach_btn.setCursor(Qt.PointingHandCursor)
         self.attach_btn.setStyleSheet("""
-            QPushButton { background-color: transparent; border: 1px solid #3f3f3f; font-size: 20px; color: #a3a3a3; border-radius: 16px; margin-bottom: 2px;}
-            QPushButton:hover { color: white; background-color: #2f2f2f; border: 1px solid #4f4f4f; }
+            QPushButton { 
+                background-color: #2f2f2f; 
+                border: none; 
+                border-radius: 16px; 
+                font-family: Arial; 
+                font-size: 24px; 
+                color: #a3a3a3; 
+                padding-bottom: 4px;
+            }
+            QPushButton:hover { 
+                background-color: #3f3f3f; 
+                color: white; 
+            }
         """)
         self.attach_btn.clicked.connect(self.on_attach_click)
         
