@@ -91,10 +91,10 @@ class ChatPage(QWidget):
         
         # --- CENTER: Chat Area ---
         # Main Chat Area (Right side)
-        chat_widget = OverlayChatWidget()
-        chat_widget.setObjectName("ChatArea")
-        splitter.addWidget(chat_widget)
-        chat_layout = QVBoxLayout(chat_widget)
+        self.chat_widget = OverlayChatWidget()
+        self.chat_widget.setObjectName("ChatArea")
+        splitter.addWidget(self.chat_widget)
+        chat_layout = QVBoxLayout(self.chat_widget)
         chat_layout.setContentsMargins(0, 0, 0, 0)
         
         # Scroll Area for beautiful widgets
@@ -223,9 +223,9 @@ class ChatPage(QWidget):
         input_layout.addLayout(bottom_input_layout)
         
         # Overlay container for absolute positioning
-        chat_widget.input_container = QWidget(chat_widget)
-        chat_widget.input_container.setStyleSheet("background: transparent;")
-        overlay_layout = QVBoxLayout(chat_widget.input_container)
+        self.chat_widget.input_container = QWidget(self.chat_widget)
+        self.chat_widget.input_container.setStyleSheet("background: transparent;")
+        overlay_layout = QVBoxLayout(self.chat_widget.input_container)
         overlay_layout.setContentsMargins(0, 0, 0, 0)
         
         # Add a subtle gradient background to the overlay container to blend the bottom
@@ -711,12 +711,27 @@ class ChatPage(QWidget):
         layout.addWidget(rm_btn)
         
         self.attachments_layout.addWidget(pill)
+        
+        # Force overlay resize to prevent squishing
+        if hasattr(self, 'chat_widget') and hasattr(self.chat_widget, 'resizeEvent'):
+            # Trigger a fake resize event to update geometry
+            from PySide6.QtGui import QResizeEvent
+            from PySide6.QtWidgets import QApplication
+            QApplication.processEvents()
+            self.chat_widget.resizeEvent(QResizeEvent(self.chat_widget.size(), self.chat_widget.size()))
 
     def remove_attachment(self, file_path, pill_widget):
         if file_path in self.attached_files:
             self.attached_files.remove(file_path)
         pill_widget.setParent(None)
         pill_widget.deleteLater()
+        
+        # Force overlay resize to prevent squishing
+        if hasattr(self, 'chat_widget') and hasattr(self.chat_widget, 'resizeEvent'):
+            from PySide6.QtGui import QResizeEvent
+            from PySide6.QtWidgets import QApplication
+            QApplication.processEvents()
+            self.chat_widget.resizeEvent(QResizeEvent(self.chat_widget.size(), self.chat_widget.size()))
 
     def _extract_file_content(self, file_path) -> str:
         import os
@@ -790,6 +805,13 @@ class ChatPage(QWidget):
                 item = self.attachments_layout.takeAt(0)
                 if item.widget():
                     item.widget().deleteLater()
+            
+            # Force overlay resize to prevent squishing
+            if hasattr(self, 'chat_widget') and hasattr(self.chat_widget, 'resizeEvent'):
+                from PySide6.QtGui import QResizeEvent
+                from PySide6.QtWidgets import QApplication
+                QApplication.processEvents()
+                self.chat_widget.resizeEvent(QResizeEvent(self.chat_widget.size(), self.chat_widget.size()))
                     
         # Append context to prompt implicitly (user doesn't see the huge text in bubble)
         full_prompt = prompt + attachment_context

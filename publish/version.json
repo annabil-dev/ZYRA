@@ -1,4 +1,4 @@
 {
-    "version": "v1.0.20",
-    "description": "Hotfix: Fixed app crash on startup due to missing method reference"
+    "version": "v1.0.21",
+    "description": "Hotfix: Fixed attachment UI layout squishing text box"
 }
