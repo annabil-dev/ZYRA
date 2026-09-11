@@ -1,4 +1,4 @@
 {
-    "version": "v1.0.17",
-    "description": "Added Markdown Code Blocks, Copy Buttons, and Version Display"
+    "version": "v1.0.18",
+    "description": "Added Python Syntax Highlighting, Fixed Text Borders, Fixed UI Flickering during generation"
 }
