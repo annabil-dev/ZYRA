@@ -1,4 +1,4 @@
 {
-    "version": "v1.0.18",
-    "description": "Added Python Syntax Highlighting, Fixed Text Borders, Fixed UI Flickering during generation"
+    "version": "v1.0.19",
+    "description": "Full File Import/Export System (Text, PDF, Docx, Image) and Download Button"
 }

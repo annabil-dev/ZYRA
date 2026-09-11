@@ -167,8 +167,26 @@ class ChatPage(QWidget):
         model_layout.addStretch()
         input_layout.addLayout(model_layout)
         
-        # Bottom part of input frame: Text input & Send button
+        # Attachment Pill Layout
+        self.attachments_layout = QHBoxLayout()
+        self.attachments_layout.setAlignment(Qt.AlignLeft)
+        input_layout.addLayout(self.attachments_layout)
+        
+        self.attached_files = []
+        
+        # Bottom part of input frame: Attach button, Text input & Send button
         bottom_input_layout = QHBoxLayout()
+        
+        self.attach_btn = QPushButton("📎")
+        self.attach_btn.setToolTip("Attach File")
+        self.attach_btn.setFixedSize(36, 36)
+        self.attach_btn.setCursor(Qt.PointingHandCursor)
+        self.attach_btn.setStyleSheet("""
+            QPushButton { background-color: transparent; border: none; font-size: 18px; color: #a3a3a3; }
+            QPushButton:hover { color: white; background-color: #2f2f2f; border-radius: 18px; }
+        """)
+        self.attach_btn.clicked.connect(self.on_attach_click)
+        
         self.input_field = QLineEdit()
         self.input_field.setPlaceholderText("Message ZYRA...")
         self.input_field.setStyleSheet("""
@@ -198,6 +216,7 @@ class ChatPage(QWidget):
         """)
         self.send_btn.clicked.connect(self.on_send_click)
         
+        bottom_input_layout.addWidget(self.attach_btn)
         bottom_input_layout.addWidget(self.input_field)
         bottom_input_layout.addWidget(self.send_btn)
         
@@ -654,20 +673,136 @@ class ChatPage(QWidget):
             self.load_btn.setEnabled(True)
             QMessageBox.critical(self, "Load Error", str(e))
 
-    def start_generation(self):
-        if not self.generator:
-            QMessageBox.warning(self, "Warning", "Please load or connect to a model first.")
-            return
+    def on_attach_click(self):
+        from PySide6.QtWidgets import QFileDialog
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Attach Files", "", 
+            "All Supported (*.txt *.md *.csv *.json *.py *.js *.html *.css *.pdf *.docx *.png *.jpg *.jpeg);;Text Files (*.txt *.md *.csv *.json *.py *.js *.html *.css);;PDF & Docs (*.pdf *.docx);;Images (*.png *.jpg *.jpeg);;All Files (*)"
+        )
+        
+        for file_path in files:
+            if file_path not in self.attached_files:
+                self.attached_files.append(file_path)
+                self._add_attachment_pill(file_path)
+
+    def _add_attachment_pill(self, file_path):
+        import os
+        filename = os.path.basename(file_path)
+        
+        pill = QWidget()
+        pill.setStyleSheet("""
+            QWidget { background-color: #2f2f2f; border-radius: 12px; border: 1px solid #3f3f3f; }
+            QLabel { background: transparent; color: #f8fafc; font-size: 12px; border: none; }
+            QPushButton { background: transparent; color: #ef4444; font-weight: bold; font-size: 12px; border: none; border-radius: 8px; }
+            QPushButton:hover { background-color: #ef4444; color: white; }
+        """)
+        
+        layout = QHBoxLayout(pill)
+        layout.setContentsMargins(10, 4, 4, 4)
+        layout.setSpacing(5)
+        
+        lbl = QLabel(f"📄 {filename}")
+        layout.addWidget(lbl)
+        
+        rm_btn = QPushButton("✕")
+        rm_btn.setFixedSize(20, 20)
+        rm_btn.setCursor(Qt.PointingHandCursor)
+        rm_btn.clicked.connect(lambda: self.remove_attachment(file_path, pill))
+        layout.addWidget(rm_btn)
+        
+        self.attachments_layout.addWidget(pill)
+
+    def remove_attachment(self, file_path, pill_widget):
+        if file_path in self.attached_files:
+            self.attached_files.remove(file_path)
+        pill_widget.setParent(None)
+        pill_widget.deleteLater()
+
+    def _extract_file_content(self, file_path) -> str:
+        import os
+        ext = os.path.splitext(file_path)[1].lower()
+        
+        # Images will be handled by base64 encoder if backend supports it.
+        # But for text extraction context, we just return a placeholder or nothing for images
+        if ext in ['.png', '.jpg', '.jpeg']:
+            return f"[Image attached: {os.path.basename(file_path)}]"
             
+        try:
+            if ext == '.pdf':
+                try:
+                    import PyPDF2
+                    text = ""
+                    with open(file_path, 'rb') as f:
+                        reader = PyPDF2.PdfReader(f)
+                        for page in reader.pages:
+                            text += page.extract_text() + "\n"
+                    return text
+                except ImportError:
+                    return f"[Error: PyPDF2 library not installed. Cannot read {os.path.basename(file_path)}]"
+            elif ext == '.docx':
+                try:
+                    import docx
+                    doc = docx.Document(file_path)
+                    return "\n".join([p.text for p in doc.paragraphs])
+                except ImportError:
+                    return f"[Error: python-docx library not installed. Cannot read {os.path.basename(file_path)}]"
+            else:
+                # Default to text
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    return f.read()
+        except Exception as e:
+            return f"[Error reading file {os.path.basename(file_path)}: {str(e)}]"
+
+    def on_send_click(self):
         prompt = self.input_field.text().strip()
-        if not prompt:
+        
+        if not prompt and not self.attached_files:
             return
             
-        # 1. Database - Create new session if none exists
-        if self.current_session_id is None and self.db_manager and self.db_manager.connection:
-            cursor = self.db_manager.connection.cursor()
-            title = prompt[:30] + "..." if len(prompt) > 30 else prompt
+        if self.worker and self.worker.isRunning():
+            # Stop generation
+            self.worker.stop()
+            self.send_btn.setEnabled(False)
+            self.send_btn.setText("Stopping...")
+            return
+
+        # Prepare context from attachments
+        attachment_context = ""
+        has_images = False
+        image_paths = []
+        
+        if self.attached_files:
+            attachment_context = "\n\n--- ATTACHED FILES ---\n"
+            for fp in self.attached_files:
+                import os
+                ext = os.path.splitext(fp)[1].lower()
+                if ext in ['.png', '.jpg', '.jpeg']:
+                    has_images = True
+                    image_paths.append(fp)
+                else:
+                    content = self._extract_file_content(fp)
+                    attachment_context += f"\nFile: {os.path.basename(fp)}\n```\n{content}\n```\n"
+            attachment_context += "----------------------\n"
+            
+            # Clear attachments after sending
+            self.attached_files.clear()
+            while self.attachments_layout.count():
+                item = self.attachments_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+                    
+        # Append context to prompt implicitly (user doesn't see the huge text in bubble)
+        full_prompt = prompt + attachment_context
+            
+        if not self.generator:
+            QMessageBox.warning(self, "No Backend", "Please connect to an AI model first.")
+            return
+            
+        # 1. Database - Create session if none
+        if self.db_manager and self.db_manager.connection and not self.current_session_id:
+            title = prompt[:30] + "..." if len(prompt) > 30 else (prompt if prompt else "File Analysis")
             model_tag = self.ollama_model_combo.currentData() or self.ollama_model_combo.currentText()
+            cursor = self.db_manager.connection.cursor()
             cursor.execute("INSERT INTO chat_sessions (title, model_name) VALUES (?, ?)", (title, model_tag))
             self.current_session_id = cursor.lastrowid
             self.db_manager.connection.commit()
@@ -725,7 +860,8 @@ class ChatPage(QWidget):
         
         self.worker = InferenceWorker(
             generator=self.generator,
-            prompt=prompt,
+            prompt=full_prompt,
+            image_paths=image_paths,
             history=history_msgs,
             max_tokens=self.max_tokens_input.value(),
             temperature=self.temp_input.value(),

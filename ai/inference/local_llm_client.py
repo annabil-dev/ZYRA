@@ -53,6 +53,7 @@ class LocalLLMGenerator:
         temperature: float = 0.7,
         top_k: int = 40,
         top_p: float = 0.9,
+        image_paths: list = None
     ) -> Generator[Tuple[str, str, Dict[str, Any]], None, None]:
         
         self.is_interrupted = False
@@ -70,7 +71,24 @@ class LocalLLMGenerator:
         if history:
             messages.extend(history)
             
-        messages.append({"role": "user", "content": prompt})
+        if not image_paths:
+            messages.append({"role": "user", "content": prompt})
+        else:
+            import base64
+            content_list = [{"type": "text", "text": prompt}]
+            for img_path in image_paths:
+                try:
+                    with open(img_path, "rb") as image_file:
+                        encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+                        content_list.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{encoded_string}"
+                            }
+                        })
+                except Exception as e:
+                    self.logger.error(f"Failed to encode image {img_path}: {e}")
+            messages.append({"role": "user", "content": content_list})
         
         start_time = time.time()
         generated_text = ""

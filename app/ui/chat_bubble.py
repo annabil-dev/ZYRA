@@ -79,8 +79,17 @@ class CodeBlockWidget(QWidget):
         """)
         self.copy_btn.clicked.connect(self.copy_to_clipboard)
         
+        self.download_btn = QPushButton("Download")
+        self.download_btn.setCursor(Qt.PointingHandCursor)
+        self.download_btn.setStyleSheet("""
+            QPushButton { background-color: #3f3f3f; color: white; border: none; padding: 4px 10px; border-radius: 4px; font-size: 12px; margin-left: 5px; }
+            QPushButton:hover { background-color: #4f4f4f; }
+        """)
+        self.download_btn.clicked.connect(self.download_file)
+        
         h_layout.addWidget(self.lang_lbl)
         h_layout.addStretch()
+        h_layout.addWidget(self.download_btn)
         h_layout.addWidget(self.copy_btn)
         
         # Code content
@@ -94,10 +103,12 @@ class CodeBlockWidget(QWidget):
         layout.addWidget(self.code_lbl)
         
         self.raw_code = code
+        self.language = language
         self.update_code(code, language)
 
     def update_code(self, code: str, language: str):
         self.raw_code = code
+        self.language = language
         self.lang_lbl.setText(language if language else "code")
         if language.lower() == "python":
             highlighted = highlight_python_code(code.strip())
@@ -105,6 +116,30 @@ class CodeBlockWidget(QWidget):
         else:
             safe_code = code.strip().replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('\n', '<br>')
             self.code_lbl.setText(safe_code)
+
+    def download_file(self):
+        from PySide6.QtWidgets import QFileDialog
+        
+        # Determine extension based on language
+        ext_map = {
+            "python": ".py", "javascript": ".js", "html": ".html", "css": ".css",
+            "c": ".c", "cpp": ".cpp", "java": ".java", "json": ".json",
+            "markdown": ".md", "bash": ".sh", "sh": ".sh"
+        }
+        lang = self.language.lower()
+        ext = ext_map.get(lang, ".txt")
+        
+        file_path, _ = QFileDialog.getSaveFileName(self, "Download File", f"code{ext}", f"All Files (*.*)")
+        if file_path:
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(self.raw_code.strip())
+                
+                self.download_btn.setText("Saved!")
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(2000, lambda: self.download_btn.setText("Download"))
+            except Exception as e:
+                self.download_btn.setText("Error")
 
     def copy_to_clipboard(self):
         QApplication.clipboard().setText(self.raw_code.strip())

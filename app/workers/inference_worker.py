@@ -11,7 +11,7 @@ class InferenceWorker(QThread):
     generation_finished = Signal()
     generation_error = Signal(str)
 
-    def __init__(self, generator, prompt: str, history: list, max_tokens: int, temperature: float, top_k: int, top_p: float):
+    def __init__(self, generator, prompt: str, history: list, max_tokens: int, temperature: float, top_k: int, top_p: float, image_paths: list = None):
         super().__init__()
         self.generator = generator
         self.prompt = prompt
@@ -20,6 +20,7 @@ class InferenceWorker(QThread):
         self.temperature = temperature
         self.top_k = top_k
         self.top_p = top_p
+        self.image_paths = image_paths or []
         
         self.logger = logging.getLogger("inference.worker")
 
@@ -35,7 +36,8 @@ class InferenceWorker(QThread):
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
                 top_k=self.top_k,
-                top_p=self.top_p
+                top_p=self.top_p,
+                image_paths=self.image_paths
             ):
                 delta_buffer += delta
                 current_time = time.time()
