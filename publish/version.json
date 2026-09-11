@@ -1,4 +1,4 @@
 {
-    "version": "v1.0.22",
-    "description": "Hotfix: Fixed attachment UI layout squishing text box (AdjustSize Fix)"
+    "version": "v1.0.23",
+    "description": "Hotfix: Changed attachment button icon to a plus symbol for better rendering"
 }

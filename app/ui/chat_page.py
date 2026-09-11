@@ -177,13 +177,13 @@ class ChatPage(QWidget):
         # Bottom part of input frame: Attach button, Text input & Send button
         bottom_input_layout = QHBoxLayout()
         
-        self.attach_btn = QPushButton("📎")
+        self.attach_btn = QPushButton("+")
         self.attach_btn.setToolTip("Attach File")
-        self.attach_btn.setFixedSize(36, 36)
+        self.attach_btn.setFixedSize(32, 32)
         self.attach_btn.setCursor(Qt.PointingHandCursor)
         self.attach_btn.setStyleSheet("""
-            QPushButton { background-color: transparent; border: none; font-size: 18px; color: #a3a3a3; }
-            QPushButton:hover { color: white; background-color: #2f2f2f; border-radius: 18px; }
+            QPushButton { background-color: transparent; border: 1px solid #3f3f3f; font-size: 20px; color: #a3a3a3; border-radius: 16px; margin-bottom: 2px;}
+            QPushButton:hover { color: white; background-color: #2f2f2f; border: 1px solid #4f4f4f; }
         """)
         self.attach_btn.clicked.connect(self.on_attach_click)
         
