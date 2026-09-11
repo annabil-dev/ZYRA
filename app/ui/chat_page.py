@@ -932,8 +932,8 @@ class ChatPage(QWidget):
                 else:
                     self.update_status_lbl.setText("App is up to date.")
                     self.update_status_lbl.setStyleSheet("")
-            except Exception:
-                pass
+        except Exception:
+            pass
 
     def on_generation_error(self, err: str):
         self.send_btn.setEnabled(True)
