@@ -44,7 +44,7 @@ class MainWindow(QMainWindow):
         self.sidebar.setObjectName("Sidebar")
         self.sidebar.setFixedWidth(220)
         
-        sidebar_items = ["Dashboard", "Chat", "Dataset", "Training", "Models", "Settings", "Logs"]
+        sidebar_items = ["Dashboard", "Chat", "Dataset", "Training", "Models", "Settings"]
         self.sidebar.addItems(sidebar_items)
         
         # Pages Container
@@ -57,7 +57,7 @@ class MainWindow(QMainWindow):
         self.training_page = PlaceholderPage("Training")
         self.models_page = ModelsPage(self.hardware_info, self.chat_page)
         self.settings_page = SettingsPage(self.chat_page)
-        self.logs_page = LogsPage(self.log_file_path)
+        # self.logs_page = LogsPage(self.log_file_path)
         
         self.pages.addWidget(self.dashboard_page)
         self.pages.addWidget(self.chat_page)
@@ -65,7 +65,7 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.training_page)
         self.pages.addWidget(self.models_page)
         self.pages.addWidget(self.settings_page)
-        self.pages.addWidget(self.logs_page)
+        # self.pages.addWidget(self.logs_page)
         
         self.sidebar.currentRowChanged.connect(self.pages.setCurrentIndex)
         
