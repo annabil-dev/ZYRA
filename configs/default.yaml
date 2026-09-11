@@ -1,0 +1,94 @@
+application:
+  name: "MY-AI"
+  version: "0.0.1"
+
+paths:
+  datasets: "data/datasets"
+  models: "models"
+  checkpoints: "checkpoints"
+  logs: "logs"
+  database: "database"
+  tokenizer_corpus: "data/tokenizer/corpus"
+  tokenizer_models: "models/tokenizer"
+
+tokenizer:
+  algorithm: "byte_level_bpe"
+  vocab_size: 512
+  min_frequency: 2
+  special_tokens:
+    pad: "<|pad|>"
+    bos: "<|bos|>"
+    eos: "<|eos|>"
+    unk: "<|unk|>"
+
+dataset_pipeline:
+  random_seed: 42
+  split_ratio:
+    train: 0.8
+    validation: 0.1
+    test: 0.1
+  jsonl_text_field: "text"
+  chunk_size: 1000  # number of documents before writing to disk
+
+model:
+  architecture: "my_ai_decoder_transformer"
+  version: "0.1"
+  vocab_size: "auto"
+  context_length: 256
+  num_layers: 8
+  hidden_size: 512
+  num_attention_heads: 8
+  intermediate_size: 1536
+  rms_norm_eps: 1.0e-5
+  rope_theta: 10000.0
+  dropout: 0.0
+  attention_dropout: 0.0
+  tie_word_embeddings: true
+  bias: false
+
+model_profiles:
+  tiny:
+    architecture: "my_ai_decoder_transformer"
+    num_layers: 2
+    hidden_size: 128
+    num_attention_heads: 4
+    context_length: 64
+  development:
+    architecture: "my_ai_decoder_transformer"
+    num_layers: 4
+    hidden_size: 256
+    num_attention_heads: 4
+    context_length: 128
+  baseline:
+    architecture: "fixed_context_mlp"
+    context_length: 32
+    embedding_dim: 128
+    hidden_dim: 512
+    dropout: 0.1
+
+training:
+  batch_size: 64
+  learning_rate: 0.001
+  weight_decay: 0.01
+  max_steps: 1000
+  eval_interval: 100
+  checkpoint_interval: 250
+  gradient_clip_norm: 1.0
+  seed: 1337
+  device: "auto"
+  amp:
+    enabled: false
+  dataset:
+    split: "train"
+    validation_split: "validation"
+  checkpoints_dir: "checkpoints/baseline"
+
+device:
+  preferred: "cuda"
+  allow_cpu_fallback: true
+
+training:
+  enabled: false
+
+network:
+  allow_external_connection: false

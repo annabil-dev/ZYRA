@@ -1,0 +1,42 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller folders
+build/
+dist/
+*.spec
+
+# Database
+*.sqlite
+*.db
+
+# Virtual environments
+venv/
+env/
+.env
+
+# IDEs
+.vscode/
+.idea/
+
+# Large Datasets and AI Models
+data/corpus/
+data/datasets/
+checkpoints/
+models/
+training_runs/
+mock_dataset/
+mock_tokenizer/
+mock_tokenizer_real/
+
+# Archives and Installer Files
+*.zip
+*.exe
+*.bz2
+*.pt
+*.bak
+
+# Other
+*.log

@@ -1,0 +1,40 @@
+model:
+  family: "ZYRA"
+  generation: "ZYRA-1"
+  variant: "Base"
+  version: "0.1.0-dev"
+  status: "development"
+
+architecture:
+  name: "my_ai_decoder_transformer"
+  version: "1"
+  vocab_size: "auto"
+  context_length: 256
+  num_layers: 8
+  hidden_size: 512
+  num_attention_heads: 8
+  intermediate_size: 1536
+  rms_norm_eps: 1.0e-5
+  rope_theta: 10000.0
+  dropout: 0.0
+  attention_dropout: 0.0
+  tie_word_embeddings: true
+  bias: false
+
+training:
+  seed: 1337
+  micro_batch_size: 4
+  gradient_accumulation_steps: 8
+  max_steps: 5000
+  max_tokens: 1000000000 # 1 Billion tokens
+  learning_rate: 0.0003
+  min_learning_rate: 0.00003
+  warmup_steps: 200
+  weight_decay: 0.1
+  gradient_clip_norm: 1.0
+  log_interval: 10
+  eval_interval: 250
+  checkpoint_interval: 500
+  device: "auto"
+  precision: "auto"
+  checkpoints_dir: "models/ZYRA/ZYRA-1/Base/v0.1.0-dev/checkpoints"

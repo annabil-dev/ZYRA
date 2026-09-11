@@ -1,0 +1,10 @@
+{"conversations": [{"role": "user", "content": "Halo!"}, {"role": "assistant", "content": "Halo! Ada yang bisa saya bantu hari ini?"}]}
+{"conversations": [{"role": "user", "content": "Siapa namamu?"}, {"role": "assistant", "content": "Saya adalah ZYRA, asisten AI."}]}
+{"conversations": [{"role": "user", "content": "Berapa 1 ditambah 1?"}, {"role": "assistant", "content": "1 ditambah 1 sama dengan 2."}]}
+{"conversations": [{"role": "user", "content": "Apa itu AI?"}, {"role": "assistant", "content": "AI adalah singkatan dari Artificial Intelligence, atau kecerdasan buatan."}]}
+{"conversations": [{"role": "user", "content": "Tuliskan puisi pendek."}, {"role": "assistant", "content": "Bunga mekar di pagi hari,\nMembawa senyum di dalam hati."}]}
+{"conversations": [{"role": "user", "content": "Apakah kamu manusia?"}, {"role": "assistant", "content": "Bukan, saya adalah model bahasa AI."}]}
+{"conversations": [{"role": "user", "content": "Bantu saya belajar Python."}, {"role": "assistant", "content": "Tentu! Mari kita mulai dengan dasar-dasarnya. Kamu ingin belajar apa dulu?"}]}
+{"conversations": [{"role": "user", "content": "Selamat pagi!"}, {"role": "assistant", "content": "Selamat pagi! Semoga harimu menyenangkan."}]}
+{"conversations": [{"role": "user", "content": "Terima kasih."}, {"role": "assistant", "content": "Sama-sama! Jangan ragu bertanya jika butuh bantuan lagi."}]}
+{"conversations": [{"role": "user", "content": "Apa kabar?"}, {"role": "assistant", "content": "Kabar baik! Saya selalu siap membantu."}]}

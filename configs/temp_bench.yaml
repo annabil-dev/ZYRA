@@ -1,0 +1,71 @@
+application:
+  name: MY-AI
+  version: 0.0.1
+dataset_pipeline:
+  chunk_size: 1000
+  jsonl_text_field: text
+  random_seed: 42
+  split_ratio:
+    test: 0.1
+    train: 0.8
+    validation: 0.1
+device:
+  allow_cpu_fallback: true
+  preferred: cuda
+model:
+  architecture: my_ai_decoder_transformer
+  attention_dropout: 0.0
+  bias: false
+  context_length: 256
+  dropout: 0.0
+  hidden_size: 512
+  intermediate_size: 1536
+  num_attention_heads: 8
+  num_layers: 8
+  rms_norm_eps: 1.0e-05
+  rope_theta: 10000.0
+  tie_word_embeddings: true
+  version: '0.1'
+  vocab_size: auto
+model_profiles:
+  baseline:
+    architecture: fixed_context_mlp
+    context_length: 32
+    dropout: 0.1
+    embedding_dim: 128
+    hidden_dim: 512
+  development:
+    architecture: my_ai_decoder_transformer
+    context_length: 128
+    hidden_size: 256
+    num_attention_heads: 4
+    num_layers: 4
+  tiny:
+    architecture: my_ai_decoder_transformer
+    context_length: 64
+    hidden_size: 128
+    num_attention_heads: 4
+    num_layers: 2
+network:
+  allow_external_connection: false
+paths:
+  checkpoints: checkpoints
+  database: database
+  datasets: data/datasets
+  logs: logs
+  models: models
+  tokenizer_corpus: data/tokenizer/corpus
+  tokenizer_models: models/tokenizer
+tokenizer:
+  algorithm: byte_level_bpe
+  min_frequency: 2
+  special_tokens:
+    bos: <|bos|>
+    eos: <|eos|>
+    pad: <|pad|>
+    unk: <|unk|>
+  vocab_size: 512
+training:
+  enabled: false
+  micro_batch_size: 8
+  precision: amp
