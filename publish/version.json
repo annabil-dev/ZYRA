@@ -1,4 +1,4 @@
 {
-    "version": "v1.0.19",
-    "description": "Full File Import/Export System (Text, PDF, Docx, Image) and Download Button"
+    "version": "v1.0.20",
+    "description": "Hotfix: Fixed app crash on startup due to missing method reference"
 }

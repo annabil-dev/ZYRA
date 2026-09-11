@@ -197,7 +197,7 @@ class ChatPage(QWidget):
                 font-size: 14px;
             }
         """)
-        self.input_field.returnPressed.connect(self.start_generation)
+        self.input_field.returnPressed.connect(self.on_send_click)
         
         self.send_btn = QPushButton("Send")
         self.send_btn.setObjectName("SendBtn")
