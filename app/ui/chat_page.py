@@ -809,115 +809,122 @@ class ChatPage(QWidget):
             return (0, 0, 0)
 
     def check_for_updates(self):
-        import os, sys, json, time, zipfile, shutil
-        # For simulation, check local publish folder. Real apps check a URL.
-        if getattr(sys, 'frozen', False):
-            root_dir = os.path.dirname(os.path.dirname(os.path.dirname(sys.executable)))
-        else:
-            root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            
-        publish_dir = os.path.join(root_dir, "publish")
-        version_path = os.path.join(publish_dir, "version.json")
-        zip_path = os.path.join(publish_dir, "update.zip")
+        import json, requests
+        self.check_update_btn.setText("Checking...")
+        self.check_update_btn.setEnabled(False)
+        self.repaint()
         
-        if not os.path.exists(version_path):
-            QMessageBox.information(self, "Updater", "No updates found. You are on the latest version.")
+        try:
+            resp = requests.get("https://raw.githubusercontent.com/annabil-dev/ZYRA/main/publish/version.json", timeout=5)
+            if resp.status_code == 200:
+                v_info = resp.json()
+            else:
+                raise Exception(f"HTTP {resp.status_code}")
+        except Exception as e:
+            QMessageBox.warning(self, "Updater", f"Failed to check for updates: {e}")
+            self.check_update_btn.setText("Check for Updates")
+            self.check_update_btn.setEnabled(True)
             return
+
+        import os, sys
+        user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
-        with open(version_path, 'r') as f:
-            v_info = json.load(f)
-            
-        if getattr(sys, 'frozen', False):
-            user_data_dir = os.path.dirname(sys.executable)
-        else:
-            user_data_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            
-        current_version = "v0.0.0"
+        current_version = "v1.0.13" # The base bundled version
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v0.0.0")
+                    current_version = json.load(f).get("version", "v1.0.13")
             except Exception:
                 pass
                 
-        pub_version = v_info.get("version", "v0.0.0")
-        if self._parse_version(pub_version) <= self._parse_version(current_version) and current_version != "v0.0.0":
-            QMessageBox.information(self, "Updater", "You are already on the latest version.")
+        pub_version = v_info.get("version", "v1.0.13")
+        
+        self.check_update_btn.setText("Check for Updates")
+        self.check_update_btn.setEnabled(True)
+        
+        if self._parse_version(pub_version) <= self._parse_version(current_version):
+            QMessageBox.information(self, "Updater", f"You are already on the latest version ({current_version}).")
             return
             
         reply = QMessageBox.question(self, "Update Available", 
-                                     f"New source code update found!\nDesc: {v_info.get('description')}\nPatch: {pub_version}\nUpdate now?",
+                                     f"New OTA Update found!\nDesc: {v_info.get('description')}\nNew Version: {pub_version}\nCurrent Version: {current_version}\n\nUpdate now?",
                                      QMessageBox.Yes | QMessageBox.No)
                                      
         if reply == QMessageBox.Yes:
-            self._apply_update(zip_path, v_info)
+            self._apply_update(v_info)
             
-    def _apply_update(self, zip_path, v_info):
-        import os, sys, time, zipfile, json
+    def _apply_update(self, v_info):
+        import os, sys, time, zipfile, json, requests, io, shutil
         self.update_progress.setVisible(True)
-        self.update_progress.setRange(0, 100)
-        self.update_status_lbl.setText("Downloading and extracting...")
+        self.update_progress.setRange(0, 0) # indeterminate
+        self.update_status_lbl.setText("Downloading from GitHub...")
         self.check_update_btn.setEnabled(False)
         self.repaint()
         
-        # Simulate download delay
-        for i in range(101):
-            self.update_progress.setValue(i)
-            time.sleep(0.01)
+        try:
+            # Download the main repository zip
+            resp = requests.get("https://github.com/annabil-dev/ZYRA/archive/refs/heads/main.zip", stream=True, timeout=30)
+            resp.raise_for_status()
+            
+            self.update_status_lbl.setText("Extracting update...")
             self.repaint()
             
-        # Extract
-        if getattr(sys, 'frozen', False):
-            user_data_dir = os.path.dirname(sys.executable)
-        else:
-            user_data_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
+            update_dir = os.path.join(user_data_dir, "updates")
+            os.makedirs(update_dir, exist_ok=True)
             
-        update_dir = os.path.join(user_data_dir, "updates")
-        os.makedirs(update_dir, exist_ok=True)
-        
-        with zipfile.ZipFile(zip_path, 'r') as zipf:
-            zipf.extractall(update_dir)
+            with zipfile.ZipFile(io.BytesIO(resp.content)) as zipf:
+                # The zip contains "ZYRA-main/app/..."
+                for member in zipf.namelist():
+                    if member.startswith("ZYRA-main/app/"):
+                        # Extract and strip the "ZYRA-main/" prefix so it goes to updates/app/
+                        target_path = os.path.join(update_dir, member.replace("ZYRA-main/", ""))
+                        if member.endswith('/'):
+                            os.makedirs(target_path, exist_ok=True)
+                        else:
+                            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                            with zipf.open(member) as source, open(target_path, "wb") as target:
+                                shutil.copyfileobj(source, target)
+                                
+            with open(os.path.join(user_data_dir, "current_version.json"), "w") as f:
+                json.dump(v_info, f)
+                
+            self.update_status_lbl.setText("Update complete. Restarting...")
+            self.update_progress.setRange(0, 100)
+            self.update_progress.setValue(100)
+            self.repaint()
+            time.sleep(1)
             
-        with open(os.path.join(user_data_dir, "current_version.json"), "w") as f:
-            json.dump(v_info, f)
-            
-        self.update_status_lbl.setText("Update complete. Restarting...")
-        self.repaint()
-        time.sleep(1)
-        
-        # Restart the app
-        exe_path = sys.executable
-        if getattr(sys, 'frozen', False):
-            os.execv(exe_path, [exe_path])
-        else:
-            run_script = os.path.join(user_data_dir, "run.py")
-            os.execv(exe_path, [exe_path, run_script])
+            exe_path = sys.executable
+            if getattr(sys, 'frozen', False):
+                os.execv(exe_path, [exe_path])
+            else:
+                run_script = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "run.py")
+                os.execv(exe_path, [exe_path, run_script])
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Update Failed", f"Failed to download/apply update:\n{e}")
+            self.update_status_lbl.setText("Update failed.")
+            self.update_progress.setVisible(False)
+            self.check_update_btn.setEnabled(True)
 
     def _silent_update_check(self):
-        import os, sys, json
-        if getattr(sys, 'frozen', False):
-            root_dir = os.path.dirname(os.path.dirname(os.path.dirname(sys.executable)))
-            user_data_dir = os.path.dirname(sys.executable)
-        else:
-            root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            user_data_dir = root_dir
-            
-        publish_dir = os.path.join(root_dir, "publish")
-        version_path = os.path.join(publish_dir, "version.json")
+        import os, sys, json, requests
+        user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
         
-        if os.path.exists(version_path):
-            try:
-                with open(version_path, 'r') as f:
-                    v_info = json.load(f)
+        try:
+            resp = requests.get("https://raw.githubusercontent.com/annabil-dev/ZYRA/main/publish/version.json", timeout=3)
+            if resp.status_code == 200:
+                v_info = resp.json()
                 
-                current_version = "v0.0.0"
+                current_version = "v1.0.13"
                 current_v_path = os.path.join(user_data_dir, "current_version.json")
                 if os.path.exists(current_v_path):
                     with open(current_v_path, 'r') as f:
-                        current_version = json.load(f).get("version", "v0.0.0")
+                        current_version = json.load(f).get("version", "v1.0.13")
                         
-                pub_version = v_info.get("version", "v0.0.0")
+                pub_version = v_info.get("version", "v1.0.13")
                 
                 if self._parse_version(pub_version) > self._parse_version(current_version):
                     self.update_status_lbl.setText(f"🚀 New Update Available (Patch {pub_version})")
