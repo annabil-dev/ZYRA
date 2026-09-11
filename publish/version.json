@@ -1,4 +1,4 @@
 {
-    "version": "v1.0.21",
-    "description": "Hotfix: Fixed attachment UI layout squishing text box"
+    "version": "v1.0.22",
+    "description": "Hotfix: Fixed attachment UI layout squishing text box (AdjustSize Fix)"
 }

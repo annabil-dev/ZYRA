@@ -704,9 +704,10 @@ class ChatPage(QWidget):
         lbl = QLabel(f"📄 {filename}")
         layout.addWidget(lbl)
         
-        rm_btn = QPushButton("✕")
+        rm_btn = QPushButton("X")
         rm_btn.setFixedSize(20, 20)
         rm_btn.setCursor(Qt.PointingHandCursor)
+        rm_btn.setStyleSheet("background-color: #3f3f3f; color: #ef4444; border-radius: 10px; font-weight: bold;")
         rm_btn.clicked.connect(lambda: self.remove_attachment(file_path, pill))
         layout.addWidget(rm_btn)
         
@@ -714,10 +715,10 @@ class ChatPage(QWidget):
         
         # Force overlay resize to prevent squishing
         if hasattr(self, 'chat_widget') and hasattr(self.chat_widget, 'resizeEvent'):
-            # Trigger a fake resize event to update geometry
             from PySide6.QtGui import QResizeEvent
             from PySide6.QtWidgets import QApplication
             QApplication.processEvents()
+            self.chat_widget.input_container.adjustSize()
             self.chat_widget.resizeEvent(QResizeEvent(self.chat_widget.size(), self.chat_widget.size()))
 
     def remove_attachment(self, file_path, pill_widget):
@@ -731,6 +732,7 @@ class ChatPage(QWidget):
             from PySide6.QtGui import QResizeEvent
             from PySide6.QtWidgets import QApplication
             QApplication.processEvents()
+            self.chat_widget.input_container.adjustSize()
             self.chat_widget.resizeEvent(QResizeEvent(self.chat_widget.size(), self.chat_widget.size()))
 
     def _extract_file_content(self, file_path) -> str:
@@ -811,6 +813,7 @@ class ChatPage(QWidget):
                 from PySide6.QtGui import QResizeEvent
                 from PySide6.QtWidgets import QApplication
                 QApplication.processEvents()
+                self.chat_widget.input_container.adjustSize()
                 self.chat_widget.resizeEvent(QResizeEvent(self.chat_widget.size(), self.chat_widget.size()))
                     
         # Append context to prompt implicitly (user doesn't see the huge text in bubble)
