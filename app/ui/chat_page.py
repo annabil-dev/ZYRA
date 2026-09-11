@@ -184,6 +184,7 @@ class ChatPage(QWidget):
         self.send_btn = QPushButton("Send")
         self.send_btn.setObjectName("SendBtn")
         self.send_btn.setFixedWidth(80)
+        self.send_btn.setCursor(Qt.PointingHandCursor)
         self.send_btn.setStyleSheet("""
             QPushButton {
                 background-color: #38bdf8;
@@ -305,6 +306,7 @@ class ChatPage(QWidget):
         self.update_status_lbl = QLabel("App is up to date.")
         self.update_status_lbl.setWordWrap(True)
         self.check_update_btn = QPushButton("Check for Updates")
+        self.check_update_btn.setCursor(Qt.PointingHandCursor)
         self.check_update_btn.clicked.connect(self.check_for_updates)
         
         from PySide6.QtWidgets import QProgressBar
