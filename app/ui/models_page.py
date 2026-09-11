@@ -192,7 +192,7 @@ class ModelsPage(QWidget):
 
     def check_ollama_status(self):
         try:
-            r = requests.get("http://localhost:11434/api/tags", timeout=0.5)
+            r = requests.get("http://localhost:11434/api/tags", timeout=1.0)
             if r.status_code == 200:
                 installed_tags = [m["name"] for m in r.json().get("models", [])]
                 self.populate_catalog(installed_tags)
@@ -201,7 +201,44 @@ class ModelsPage(QWidget):
         except Exception:
             pass
             
+        # Ollama API is not responding. Check if it's installed.
+        import shutil, os, subprocess
+        ollama_path = shutil.which("ollama")
+        if not ollama_path:
+            # Check default install path
+            default_path = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama", "ollama.exe")
+            if os.path.exists(default_path):
+                ollama_path = default_path
+                
+        if ollama_path:
+            # It's installed but not running. Let's try to start it.
+            self.install_status.setText("Ollama detected. Starting engine...")
+            self.install_btn.setEnabled(False)
+            self.stack.setCurrentWidget(self.missing_page)
+            try:
+                # CREATE_NO_WINDOW is 0x08000000 on Windows
+                subprocess.Popen([ollama_path, "serve"], creationflags=0x08000000)
+                # Wait a bit and check again
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(2000, self._retry_check_after_start)
+            except Exception as e:
+                self.install_status.setText(f"Failed to start Ollama: {e}")
+            return
+
+        self.install_status.setText("")
+        self.install_btn.setEnabled(True)
         self.stack.setCurrentWidget(self.missing_page)
+
+    def _retry_check_after_start(self):
+        try:
+            r = requests.get("http://localhost:11434/api/tags", timeout=1.0)
+            if r.status_code == 200:
+                installed_tags = [m["name"] for m in r.json().get("models", [])]
+                self.populate_catalog(installed_tags)
+                self.stack.setCurrentWidget(self.catalog_page)
+                return
+        except Exception:
+            self.install_status.setText("Failed to connect to Ollama after starting. Please run it manually.")
 
     def populate_catalog(self, installed_tags):
         # Clear existing
