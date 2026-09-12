@@ -532,6 +532,51 @@ class ChatPage(QWidget):
         """Query Ollama for installed models, populate dropdown, auto-connect to the best one."""
         import httpx
         import threading
+        from PySide6.QtCore import QObject, Signal
+        
+        class WorkerSignals(QObject):
+            bad_status = Signal()
+            no_models = Signal()
+            success = Signal(list)
+            error = Signal()
+            
+        signals = WorkerSignals()
+        
+        def on_bad_status():
+            self.status_lbl.setText("Status: Ollama not responding")
+            self.ollama_model_combo.setItemText(0, "Ollama not responding")
+            
+        def on_no_models():
+            self.status_lbl.setText("Status: No Ollama models found")
+            self.ollama_model_combo.setItemText(0, "No models found")
+            self.show_toast("No models installed in Ollama. Pull a model first: ollama pull qwen2.5:32b", type="warning", duration=8000)
+            
+        def on_success(matched):
+            self.ollama_model_combo.currentIndexChanged.disconnect(self.load_model)
+            self.ollama_model_combo.clear()
+            for display_name, tag, size in matched:
+                self.ollama_model_combo.addItem(f"{display_name}", userData=tag)
+            self.ollama_model_combo.currentIndexChanged.connect(self.load_model)
+            
+            best_name, best_tag, best_size = matched[0]
+            if not quiet:
+                self.show_toast(f"Auto-detected {len(matched)} installed model(s). Best available: {best_name} ({best_size:.0f} GB)", type="info")
+                
+            self._load_ollama_model(quiet=quiet)
+            
+        def on_error():
+            if not quiet:
+                self.status_lbl.setText("Status: Ollama offline. Retrying...")
+                self.ollama_model_combo.setItemText(0, "Ollama offline...")
+                if not hasattr(self, '_ollama_offline_warned'):
+                    self.show_toast("Could not reach Ollama engine. Auto-retrying in the background...", type="warning")
+                    self._ollama_offline_warned = True
+                QTimer.singleShot(5000, lambda: self._auto_detect_and_connect(quiet))
+                
+        signals.bad_status.connect(on_bad_status)
+        signals.no_models.connect(on_no_models)
+        signals.success.connect(on_success)
+        signals.error.connect(on_error)
         
         if not quiet:
             self.status_lbl.setText("Status: Auto-detecting models...")
@@ -541,25 +586,18 @@ class ChatPage(QWidget):
             try:
                 resp = httpx.get("http://localhost:11434/api/tags", timeout=3.0)
                 if resp.status_code != 200:
-                    if not quiet:
-                        def bad_status():
-                            self.status_lbl.setText("Status: Ollama not responding")
-                            self.ollama_model_combo.setItemText(0, "Ollama not responding")
-                        QTimer.singleShot(0, bad_status)
+                    if not quiet: signals.bad_status.emit()
                     return
                 
                 data = resp.json()
                 installed_tags = {m["name"] for m in data.get("models", [])}
                 
-                # Match installed models against our priority list (best last)
                 matched = []
                 for display_name, tag, size_gb in MODEL_PRIORITY:
-                    # Ollama tags may include ':latest' suffix
                     tag_variants = [tag, tag + ":latest", tag.split(":")[0] + ":latest"]
                     if any(t in installed_tags for t in tag_variants):
                         matched.append((display_name, tag, size_gb))
                 
-                # Also add any installed models NOT in our priority list
                 known_tags = {tag for _, tag, _ in MODEL_PRIORITY}
                 for installed_tag in installed_tags:
                     base = installed_tag.replace(":latest", "")
@@ -567,44 +605,14 @@ class ChatPage(QWidget):
                         matched.append((installed_tag, base, 0))
                 
                 if not matched:
-                    if not quiet:
-                        def no_models():
-                            self.status_lbl.setText("Status: No Ollama models found")
-                            self.ollama_model_combo.setItemText(0, "No models found")
-                            self.show_toast("No models installed in Ollama. Pull a model first: ollama pull qwen2.5:32b", type="warning", duration=8000)
-                        QTimer.singleShot(0, no_models)
+                    if not quiet: signals.no_models.emit()
                     return
                 
-                # Populate dropdown — best model last in list, but first in combo
                 matched.sort(key=lambda x: x[2], reverse=True)
-                
-                def update_ui():
-                    # Temporarily disconnect to avoid triggering load_model on clear
-                    self.ollama_model_combo.currentIndexChanged.disconnect(self.load_model)
-                    self.ollama_model_combo.clear()
-                    for display_name, tag, size in matched:
-                        self.ollama_model_combo.addItem(f"{display_name}", userData=tag)
-                    self.ollama_model_combo.currentIndexChanged.connect(self.load_model)
-                    
-                    # Auto-connect
-                    best_name, best_tag, best_size = matched[0]
-                    if not quiet:
-                        self.show_toast(f"Auto-detected {len(matched)} installed model(s). Best available: {best_name} ({best_size:.0f} GB)", type="info")
-                        
-                    self._load_ollama_model(quiet=quiet)
-                    
-                QTimer.singleShot(0, update_ui)
+                signals.success.emit(matched)
                 
             except Exception as e:
-                def on_error():
-                    if not quiet:
-                        self.status_lbl.setText("Status: Ollama offline. Retrying...")
-                        self.ollama_model_combo.setItemText(0, "Ollama offline...")
-                        if not hasattr(self, '_ollama_offline_warned'):
-                            self.show_toast("Could not reach Ollama engine. Auto-retrying in the background...", type="warning")
-                            self._ollama_offline_warned = True
-                        QTimer.singleShot(5000, self._auto_detect_and_connect)
-                QTimer.singleShot(0, on_error)
+                signals.error.emit()
                 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -637,26 +645,38 @@ class ChatPage(QWidget):
             # Quick health check — try to reach the Ollama server
             import httpx
             import threading
+            from PySide6.QtCore import QObject, Signal
+            
+            class HealthSignals(QObject):
+                success = Signal()
+                fail = Signal()
+                always = Signal()
+                
+            signals = HealthSignals()
+            
+            def on_success():
+                self.status_lbl.setText(f"Status: Connected — {display_name}")
+                self.show_toast(f"Connected to local Ollama engine. Model: {model_tag}. Ready to generate.", type="success")
+                
+            def on_fail():
+                self.status_lbl.setText(f"Status: Ollama offline — will retry on send")
+                self.show_toast(f"Warning: Ollama offline at localhost. Model set to {model_tag}. Will auto-retry on send.", type="warning", duration=8000)
+                
+            signals.success.connect(on_success)
+            signals.fail.connect(on_fail)
+            signals.always.connect(lambda: self.load_btn.setEnabled(True))
             
             def check_health():
                 try:
                     resp = httpx.get("http://localhost:11434", timeout=3.0)
                     if resp.status_code == 200:
-                        if not quiet:
-                            def on_success():
-                                self.status_lbl.setText(f"Status: Connected — {display_name}")
-                                self.show_toast(f"Connected to local Ollama engine. Model: {model_tag}. Ready to generate.", type="success")
-                            QTimer.singleShot(0, on_success)
+                        if not quiet: signals.success.emit()
                     else:
                         raise ConnectionError(f"Ollama returned status {resp.status_code}")
                 except Exception:
-                    if not quiet:
-                        def on_fail():
-                            self.status_lbl.setText(f"Status: Ollama offline — will retry on send")
-                            self.show_toast(f"Warning: Ollama offline at localhost. Model set to {model_tag}. Will auto-retry on send.", type="warning", duration=8000)
-                        QTimer.singleShot(0, on_fail)
+                    if not quiet: signals.fail.emit()
                 finally:
-                    QTimer.singleShot(0, lambda: self.load_btn.setEnabled(True))
+                    signals.always.emit()
             
             threading.Thread(target=check_health, daemon=True).start()
             
@@ -1109,12 +1129,30 @@ class ChatPage(QWidget):
 
     def _silent_update_check(self):
         import threading
+        from PySide6.QtCore import QObject, Signal
+        
+        class UpdateSignals(QObject):
+            new_update = Signal(str)
+            up_to_date = Signal()
+            
+        signals = UpdateSignals()
+        
+        def on_new_update(pub_version):
+            self.update_status_lbl.setText(f"🚀 New Update Available (Patch {pub_version})")
+            self.update_status_lbl.setStyleSheet("color: #10b981; font-weight: bold;")
+            
+        def on_up_to_date():
+            self.update_status_lbl.setText("App is up to date.")
+            self.update_status_lbl.setStyleSheet("")
+            
+        signals.new_update.connect(on_new_update)
+        signals.up_to_date.connect(on_up_to_date)
+        
         def worker():
-            import os, sys, json, requests
+            import os, sys, json, requests, time
             user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
             try:
-                import time
                 resp = requests.get(f"https://raw.githubusercontent.com/annabil-dev/ZYRA/main/publish/version.json?t={int(time.time())}", timeout=3)
                 if resp.status_code == 200:
                     v_info = resp.json()
@@ -1128,15 +1166,9 @@ class ChatPage(QWidget):
                     pub_version = v_info.get("version", "v1.0.13")
                     
                     if self._parse_version(pub_version) > self._parse_version(current_version):
-                        def update_ui_new():
-                            self.update_status_lbl.setText(f"🚀 New Update Available (Patch {pub_version})")
-                            self.update_status_lbl.setStyleSheet("color: #10b981; font-weight: bold;")
-                        QTimer.singleShot(0, update_ui_new)
+                        signals.new_update.emit(pub_version)
                     else:
-                        def update_ui_old():
-                            self.update_status_lbl.setText("App is up to date.")
-                            self.update_status_lbl.setStyleSheet("")
-                        QTimer.singleShot(0, update_ui_old)
+                        signals.up_to_date.emit()
             except Exception:
                 pass
                 
