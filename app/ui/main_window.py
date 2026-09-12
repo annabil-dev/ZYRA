@@ -52,12 +52,12 @@ class MainWindow(QMainWindow):
         import json, os
         
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
-        current_version = "v1.0.57"
+        current_version = "v1.0.58"
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.57")
+                    current_version = json.load(f).get("version", "v1.0.58")
             except:
                 pass
                 
@@ -132,7 +132,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(sidebar_container)
         main_layout.addWidget(self.pages)
         
-        self.setup_system_tray(icon_path)
+        # self.setup_system_tray(icon_path)
         self.setup_global_hotkey()
         self.setup_hot_reload()
 
@@ -167,19 +167,7 @@ class MainWindow(QMainWindow):
         self.raise_()
         
     def closeEvent(self, event):
-        from PySide6.QtWidgets import QSystemTrayIcon
-        # Minimize to tray instead of closing, if tray is available
-        if QSystemTrayIcon.isSystemTrayAvailable() and self.tray_icon.isVisible():
-            self.hide()
-            self.tray_icon.showMessage(
-                "ZYRA AI",
-                "Aplikasi berjalan di latar belakang. Klik ikon ini untuk membuka kembali.",
-                QSystemTrayIcon.Information,
-                2000
-            )
-            event.ignore()
-        else:
-            event.accept()
+        event.accept()
 
     def setup_global_hotkey(self):
         from PySide6.QtCore import QThread, Signal
