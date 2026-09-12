@@ -52,12 +52,12 @@ class MainWindow(QMainWindow):
         import json, os
         
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
-        current_version = "v1.0.79"
+        current_version = "v1.0.80"
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.79")
+                    current_version = json.load(f).get("version", "v1.0.80")
             except:
                 pass
                 
@@ -74,27 +74,17 @@ class MainWindow(QMainWindow):
         self.sidebar.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
         sidebar_data = [
-            ("dashboard.svg", "Dashboard"),
-            ("chat.svg", "Chat"),
-            ("models.svg", "Models"),
-            ("settings.svg", "Settings")
+            ("dashboard.png", "Dashboard"),
+            ("dashboard.png", "Dashboard"),
+            ("chat.png", "Chat"),
+            ("models.png", "Models"),
+            ("settings.png", "Settings")
         ]
         
         from PySide6.QtWidgets import QListWidgetItem
-        from PySide6.QtCore import Qt, QSize
-        from PySide6.QtGui import QIcon
-        import os
-        import sys
         
-        # Resolve assets dir
-        if getattr(sys, 'frozen', False):
-            assets_dir = os.path.join(sys._MEIPASS, "app", "ui", "assets", "icons")
-        else:
-            assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "ui", "assets", "icons")
-            
-        # Fallback if path manipulation above fails in dev mode
-        if not os.path.exists(assets_dir):
-            assets_dir = os.path.join(os.path.dirname(__file__), "assets", "icons")
+        # Resolve assets dir safely across environments
+        assets_dir = os.path.join(os.path.dirname(__file__), "assets", "icons")
         
         self.sidebar.setIconSize(QSize(28, 28))
         
