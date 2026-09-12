@@ -188,6 +188,29 @@ class ChatPage(QWidget):
         """)
         model_layout.addWidget(self.web_search_toggle)
         
+        # Vision Toggle
+        self.vision_btn = QCheckBox("🖥️ Screen Vision")
+        self.vision_btn.setStyleSheet("""
+            QCheckBox {
+                color: #a1a1aa;
+                font-size: 13px;
+                font-weight: bold;
+                margin-left: 10px;
+            }
+            QCheckBox::indicator {
+                width: 14px;
+                height: 14px;
+                border-radius: 3px;
+                border: 1px solid #3f3f46;
+                background: #18181b;
+            }
+            QCheckBox::indicator:checked {
+                background: #2563eb;
+                border: 1px solid #2563eb;
+            }
+        """)
+        model_layout.addWidget(self.vision_btn)
+        
         model_layout.addStretch()
         input_layout.addLayout(model_layout)
         
@@ -222,38 +245,6 @@ class ChatPage(QWidget):
         """)
         self.attach_btn.clicked.connect(self.on_attach_click)
         
-        # Vision toggle button
-        self.vision_btn = QPushButton()
-        
-        # Get path for icon based on execution context
-        import sys, os
-        from PySide6.QtGui import QIcon
-        if getattr(sys, 'frozen', False):
-            base_dir = sys._MEIPASS
-        else:
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            
-        icon_path = os.path.join(base_dir, "app", "ui", "assets", "icons", "vision.svg")
-        self.vision_btn.setIcon(QIcon(icon_path))
-        self.vision_btn.setToolTip("Screen Context (On/Off)")
-        self.vision_btn.setCheckable(True)
-        self.vision_btn.setFixedSize(32, 32)
-        self.vision_btn.setCursor(Qt.PointingHandCursor)
-        self.vision_btn.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                border: none;
-                border-radius: 16px;
-                padding: 4px;
-            }
-            QPushButton:hover {
-                background-color: #27272a;
-            }
-            QPushButton:checked {
-                background-color: #3b82f6;
-            }
-        """)
-        
         self.input_field = QLineEdit()
         self.input_field.setPlaceholderText("Message ZYRA...")
         self.input_field.setStyleSheet("""
@@ -284,7 +275,6 @@ class ChatPage(QWidget):
         self.send_btn.clicked.connect(self.on_send_click)
         
         bottom_input_layout.addWidget(self.attach_btn)
-        bottom_input_layout.addWidget(self.vision_btn)
         bottom_input_layout.addWidget(self.input_field)
         bottom_input_layout.addWidget(self.send_btn)
         
@@ -1215,16 +1205,16 @@ class ChatPage(QWidget):
         import os, sys
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
-        current_version = "v1.0.66" # The base bundled version
+        current_version = "v1.0.67" # The base bundled version
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.66")
+                    current_version = json.load(f).get("version", "v1.0.67")
             except Exception:
                 pass
                 
-        pub_version = v_info.get("version", "v1.0.66")
+        pub_version = v_info.get("version", "v1.0.67")
         
         self.check_update_btn.setText("Check for Updates")
         self.check_update_btn.setEnabled(True)
@@ -1394,13 +1384,13 @@ class ChatPage(QWidget):
                 if resp.status_code == 200:
                     v_info = resp.json()
                     
-                    current_version = "v1.0.66"
+                    current_version = "v1.0.67"
                     current_v_path = os.path.join(user_data_dir, "current_version.json")
                     if os.path.exists(current_v_path):
                         with open(current_v_path, 'r') as f:
-                            current_version = json.load(f).get("version", "v1.0.66")
+                            current_version = json.load(f).get("version", "v1.0.67")
                             
-                    pub_version = v_info.get("version", "v1.0.66")
+                    pub_version = v_info.get("version", "v1.0.67")
                     
                     if self._parse_version(pub_version) > self._parse_version(current_version):
                         signals.new_update.emit(v_info)
