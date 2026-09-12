@@ -804,6 +804,14 @@ class ChatPage(QWidget):
 
     def _extract_file_content(self, file_path) -> str:
         import os
+        import sys
+        
+        # Add bundled libs to path
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        libs_dir = os.path.join(base_dir, "libs")
+        if libs_dir not in sys.path:
+            sys.path.insert(0, libs_dir)
+            
         ext = os.path.splitext(file_path)[1].lower()
         
         # Images will be handled by base64 encoder if backend supports it.
