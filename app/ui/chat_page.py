@@ -1191,9 +1191,11 @@ class ChatPage(QWidget):
         
         def worker():
             try:
-                # Add headers to avoid caching
+                import time
+                # Use a cache-busting query parameter
+                url = f"https://github.com/annabil-dev/ZYRA/archive/refs/heads/main.zip?t={int(time.time())}"
                 headers = {'Cache-Control': 'no-cache', 'Pragma': 'no-cache'}
-                resp = requests.get("https://github.com/annabil-dev/ZYRA/archive/refs/heads/main.zip", stream=True, timeout=30, headers=headers)
+                resp = requests.get(url, stream=True, timeout=30, headers=headers)
                 resp.raise_for_status()
                 
                 total_size = int(resp.headers.get('content-length', 0))
