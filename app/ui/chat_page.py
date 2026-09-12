@@ -1012,7 +1012,8 @@ class ChatPage(QWidget):
         self.repaint()
         
         try:
-            resp = requests.get("https://raw.githubusercontent.com/annabil-dev/ZYRA/main/publish/version.json", timeout=5)
+            import time
+            resp = requests.get(f"https://raw.githubusercontent.com/annabil-dev/ZYRA/main/publish/version.json?t={int(time.time())}", timeout=5)
             if resp.status_code == 200:
                 v_info = resp.json()
             else:
@@ -1113,7 +1114,8 @@ class ChatPage(QWidget):
             user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
             try:
-                resp = requests.get("https://raw.githubusercontent.com/annabil-dev/ZYRA/main/publish/version.json", timeout=3)
+                import time
+                resp = requests.get(f"https://raw.githubusercontent.com/annabil-dev/ZYRA/main/publish/version.json?t={int(time.time())}", timeout=3)
                 if resp.status_code == 200:
                     v_info = resp.json()
                     
