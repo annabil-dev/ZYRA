@@ -70,6 +70,12 @@ class LocalLLMGenerator:
         )
         system_prompt = settings.value("system_prompt", default_prompt)
         
+        # INJECT DATETIME CONTEXT
+        import datetime
+        now = datetime.datetime.now()
+        dt_str = now.strftime("%A, %d %B %Y %H:%M:%S")
+        system_prompt = f"{system_prompt}\n\n[SYSTEM CONTEXT]\nCurrent Date and Time: {dt_str}\n"
+        
         # INJECT LONG-TERM MEMORY
         try:
             from app.core.memory import get_memory_context_string

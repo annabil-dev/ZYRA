@@ -52,12 +52,12 @@ class MainWindow(QMainWindow):
         import json, os
         
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
-        current_version = "v1.0.70"
+        current_version = "v1.0.71"
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.70")
+                    current_version = json.load(f).get("version", "v1.0.71")
             except:
                 pass
                 
@@ -132,9 +132,20 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(sidebar_container)
         main_layout.addWidget(self.pages)
         
+        # Instantiate Spotlight
+        from app.ui.spotlight import SpotlightWidget
+        self.spotlight = SpotlightWidget()
+        self.spotlight.submitted.connect(self.handle_spotlight_query)
+        
         # self.setup_system_tray(icon_path)
         self.setup_global_hotkey()
         self.setup_hot_reload()
+
+    def handle_spotlight_query(self, query: str):
+        self.show_and_activate()
+        self.sidebar.setCurrentRow(1) # Switch to chat page
+        self.chat_page.input_field.setText(query)
+        self.chat_page.on_send_click()
 
     def setup_system_tray(self, icon_path):
         from PySide6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
@@ -178,14 +189,14 @@ class MainWindow(QMainWindow):
             
             def run(self):
                 # This will run blocking in the thread
-                keyboard.add_hotkey('ctrl+space', self.on_hotkey)
+                keyboard.add_hotkey('alt+space', self.on_hotkey)
                 keyboard.wait()
                 
             def on_hotkey(self):
                 self.hotkey_pressed.emit()
                 
         self.hotkey_thread = HotkeyThread(self)
-        self.hotkey_thread.hotkey_pressed.connect(self.show_and_activate)
+        self.hotkey_thread.hotkey_pressed.connect(self.spotlight.show_and_focus)
         self.hotkey_thread.start()
 
     def setup_hot_reload(self):
