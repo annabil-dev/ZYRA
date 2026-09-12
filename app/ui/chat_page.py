@@ -53,6 +53,11 @@ class ChatPage(QWidget):
         self.worker = None
         self.voice_assistant = None
         self.voice_worker = None
+        self.tts_worker = None
+        self.audio_player = QMediaPlayer()
+        self.audio_output = QAudioOutput()
+        self.audio_player.setAudioOutput(self.audio_output)
+        self.audio_output.setVolume(1.0)
         self.current_session_id = None
         self._current_ai_response = ""
         
@@ -64,6 +69,17 @@ class ChatPage(QWidget):
         QTimer.singleShot(500, self._silent_update_check)
         
     def init_ui(self):
+        import os, sys
+        from PySide6.QtGui import QIcon
+        from PySide6.QtCore import QSize
+        
+        if getattr(sys, 'frozen', False):
+            self.old_assets_dir = os.path.join(sys._MEIPASS, "app", "ui", "assets", "icons")
+        else:
+            self.old_assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui", "assets", "icons")
+            
+        self.icon_speaker_on = QIcon(os.path.join(self.assets_dir, "speaker_on.svg"))
+        self.icon_speaker_off = QIcon(os.path.join(self.assets_dir, "speaker_off.svg"))
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
         
@@ -212,6 +228,17 @@ class ChatPage(QWidget):
             }
         """)
         model_layout.addWidget(self.vision_btn)
+
+        # TTS Toggle
+        self.tts_btn = QPushButton()
+        self.tts_btn.setIcon(self.icon_speaker_off)
+        self.tts_btn.setCheckable(True)
+        self.tts_btn.setChecked(False)
+        self.tts_btn.setToolTip("Auto Read Aloud (TTS)")
+        self.tts_btn.setStyleSheet("QPushButton { background: transparent; border: none; } QPushButton:hover { background: #334155; border-radius: 5px; }")
+        self.tts_btn.toggled.connect(lambda checked: self.tts_btn.setIcon(self.icon_speaker_on if checked else self.icon_speaker_off))
+        model_layout.addWidget(self.tts_btn)
+
         
         model_layout.addStretch()
         input_layout.addLayout(model_layout)
@@ -252,14 +279,14 @@ class ChatPage(QWidget):
         from PySide6.QtCore import QSize
         
         if getattr(sys, 'frozen', False):
-            assets_dir = os.path.join(sys._MEIPASS, "app", "ui", "assets", "icons")
+            old_assets_dir = os.path.join(sys._MEIPASS, "app", "ui", "assets", "icons")
         else:
-            assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui", "assets", "icons")
+            old_assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui", "assets", "icons")
             
-        self.icon_mic = QIcon(os.path.join(assets_dir, "mic.svg"))
-        self.icon_mic_rec = QIcon(os.path.join(assets_dir, "mic_recording.svg"))
-        self.icon_send = QIcon(os.path.join(assets_dir, "send.svg"))
-        self.icon_stop = QIcon(os.path.join(assets_dir, "stop.svg"))
+        self.icon_mic = QIcon(os.path.join(self.assets_dir, "mic.svg"))
+        self.icon_mic_rec = QIcon(os.path.join(self.assets_dir, "mic_recording.svg"))
+        self.icon_send = QIcon(os.path.join(self.assets_dir, "send.svg"))
+        self.icon_stop = QIcon(os.path.join(self.assets_dir, "stop.svg"))
         
         self.mic_btn = QPushButton()
         self.mic_btn.setIcon(self.icon_mic)
@@ -1235,6 +1262,17 @@ class ChatPage(QWidget):
             self.loading_timer.stop()
         self._active_generation_session_id = None
 
+        # Trigger TTS if enabled
+        if self.tts_btn.isChecked() and self._current_ai_response.strip():
+            from app.workers.tts_worker import TTSWorker
+            if self.tts_worker and self.tts_worker.isRunning():
+                self.tts_worker.stop()
+                self.tts_worker.wait()
+            self.tts_worker = TTSWorker(self._current_ai_response, parent=self)
+            self.tts_worker.audio_ready.connect(self._play_tts_audio)
+            self.tts_worker.start()
+
+
     def _parse_version(self, v):
         try:
             return tuple(map(int, str(v).replace('v', '').split('.')))
@@ -1263,16 +1301,16 @@ class ChatPage(QWidget):
         import os, sys
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
-        current_version = "v1.0.75" # The base bundled version
+        current_version = "v1.0.76" # The base bundled version
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.75")
+                    current_version = json.load(f).get("version", "v1.0.76")
             except Exception:
                 pass
                 
-        pub_version = v_info.get("version", "v1.0.75")
+        pub_version = v_info.get("version", "v1.0.76")
         
         self.check_update_btn.setText("Check for Updates")
         self.check_update_btn.setEnabled(True)
@@ -1442,13 +1480,13 @@ class ChatPage(QWidget):
                 if resp.status_code == 200:
                     v_info = resp.json()
                     
-                    current_version = "v1.0.75"
+                    current_version = "v1.0.76"
                     current_v_path = os.path.join(user_data_dir, "current_version.json")
                     if os.path.exists(current_v_path):
                         with open(current_v_path, 'r') as f:
-                            current_version = json.load(f).get("version", "v1.0.75")
+                            current_version = json.load(f).get("version", "v1.0.76")
                             
-                    pub_version = v_info.get("version", "v1.0.75")
+                    pub_version = v_info.get("version", "v1.0.76")
                     
                     if self._parse_version(pub_version) > self._parse_version(current_version):
                         signals.new_update.emit(v_info)
@@ -1477,6 +1515,17 @@ class ChatPage(QWidget):
         self.chat_history_layout.addWidget(ChatBubbleWidget("ai", msg))
         self._scroll_to_bottom()
         self._active_generation_session_id = None
+
+        # Trigger TTS if enabled
+        if self.tts_btn.isChecked() and self._current_ai_response.strip():
+            from app.workers.tts_worker import TTSWorker
+            if self.tts_worker and self.tts_worker.isRunning():
+                self.tts_worker.stop()
+                self.tts_worker.wait()
+            self.tts_worker = TTSWorker(self._current_ai_response, parent=self)
+            self.tts_worker.audio_ready.connect(self._play_tts_audio)
+            self.tts_worker.start()
+
 
     def on_mic_clicked(self):
         """Toggles recording when the mic button is clicked."""
@@ -1560,3 +1609,7 @@ class ChatPage(QWidget):
         allow = (reply == QMessageBox.Yes)
         if hasattr(self, 'worker') and self.worker:
             self.worker.set_security_response(allow)
+
+    def _play_tts_audio(self, filepath):
+        self.audio_player.setSource(QUrl.fromLocalFile(filepath))
+        self.audio_player.play()
