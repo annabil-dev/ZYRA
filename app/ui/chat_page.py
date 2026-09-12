@@ -186,10 +186,9 @@ class ChatPage(QWidget):
                 background-color: #2f2f2f; 
                 border: none; 
                 border-radius: 16px; 
-                font-family: Arial; 
-                font-size: 24px; 
+                font-size: 20px; 
                 color: #a3a3a3; 
-                padding-bottom: 4px;
+                padding: 0px;
             }
             QPushButton:hover { 
                 background-color: #3f3f3f; 
