@@ -100,22 +100,26 @@ class LocalLLMGenerator:
         # Tool execution loop
         MAX_TOOL_CALLS = 5
         tool_call_count = 0
+        tools_supported = True
         
         while tool_call_count < MAX_TOOL_CALLS:
             if self.is_interrupted:
                 break
                 
             try:
-                response_stream = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=messages,
-                    stream=True,
-                    temperature=temperature,
-                    top_p=top_p,
-                    max_tokens=max_tokens,
-                    tools=TOOLS_SCHEMA,
-                    extra_body={"top_k": top_k}
-                )
+                kwargs = {
+                    "model": self.model_name,
+                    "messages": messages,
+                    "stream": True,
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "max_tokens": max_tokens,
+                    "extra_body": {"top_k": top_k}
+                }
+                if tools_supported:
+                    kwargs["tools"] = TOOLS_SCHEMA
+                    
+                response_stream = self.client.chat.completions.create(**kwargs)
                 
                 tool_calls_accumulator = {}
                 is_calling_tool = False
@@ -223,6 +227,13 @@ class LocalLLMGenerator:
                 break
                 
             except Exception as e:
-                self.logger.error(f"Unexpected inference error: {str(e)}")
-                yield generated_text + f"\n[ERROR: {str(e)}]", f"\n[ERROR: {str(e)}]", {"latency_ms": 0, "tokens_per_sec": 0, "vram_mb": 0}
+                err_str = str(e)
+                # Fallback for models that do not support tools
+                if "does not support tools" in err_str and tools_supported:
+                    self.logger.warning(f"Model {self.model_name} does not support tools. Retrying without tools.")
+                    tools_supported = False
+                    continue
+                    
+                self.logger.error(f"Unexpected inference error: {err_str}")
+                yield generated_text + f"\n[ERROR: {err_str}]", f"\n[ERROR: {err_str}]", {"latency_ms": 0, "tokens_per_sec": 0, "vram_mb": 0}
                 break
