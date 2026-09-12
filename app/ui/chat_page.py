@@ -976,8 +976,9 @@ class ChatPage(QWidget):
             cursor = self.db_manager.connection.cursor()
             cursor.execute("SELECT role, content FROM chat_messages WHERE session_id=? ORDER BY created_at ASC", (self.current_session_id,))
             for r, c in cursor.fetchall():
-                # Don't include the current prompt we just saved
-                history_msgs.append({"role": r, "content": c})
+                # Map 'ai' role back to 'assistant' for OpenAI API compatibility
+                api_role = "assistant" if r == "ai" else r
+                history_msgs.append({"role": api_role, "content": c})
             # Remove the last user message because we pass it as 'prompt'
             if history_msgs and history_msgs[-1]["role"] == "user":
                 history_msgs.pop()
