@@ -220,6 +220,38 @@ class ChatPage(QWidget):
         """)
         self.attach_btn.clicked.connect(self.on_attach_click)
         
+        # Vision toggle button
+        self.vision_btn = QPushButton()
+        
+        # Get path for icon based on execution context
+        import sys, os
+        from PySide6.QtGui import QIcon
+        if getattr(sys, 'frozen', False):
+            base_dir = sys._MEIPASS
+        else:
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            
+        icon_path = os.path.join(base_dir, "app", "ui", "assets", "icons", "vision.svg")
+        self.vision_btn.setIcon(QIcon(icon_path))
+        self.vision_btn.setToolTip("Screen Context (On/Off)")
+        self.vision_btn.setCheckable(True)
+        self.vision_btn.setFixedSize(32, 32)
+        self.vision_btn.setCursor(Qt.PointingHandCursor)
+        self.vision_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: none;
+                border-radius: 16px;
+                padding: 4px;
+            }
+            QPushButton:hover {
+                background-color: #27272a;
+            }
+            QPushButton:checked {
+                background-color: #3b82f6;
+            }
+        """)
+        
         self.input_field = QLineEdit()
         self.input_field.setPlaceholderText("Message ZYRA...")
         self.input_field.setStyleSheet("""
@@ -250,6 +282,7 @@ class ChatPage(QWidget):
         self.send_btn.clicked.connect(self.on_send_click)
         
         bottom_input_layout.addWidget(self.attach_btn)
+        bottom_input_layout.addWidget(self.vision_btn)
         bottom_input_layout.addWidget(self.input_field)
         bottom_input_layout.addWidget(self.send_btn)
         
@@ -908,7 +941,7 @@ class ChatPage(QWidget):
     def on_send_click(self):
         prompt = self.input_field.text().strip()
         
-        if not prompt and not self.attached_files:
+        if not prompt and not self.attached_files and not self.vision_btn.isChecked():
             return
             
         if self.worker and self.worker.isRunning():
@@ -924,6 +957,36 @@ class ChatPage(QWidget):
         attachment_context = ""
         has_images = False
         image_paths = []
+        
+        # Screen Context Capture
+        if self.vision_btn.isChecked():
+            import time
+            try:
+                from PIL import ImageGrab
+                import tempfile
+                import os
+                screenshot = ImageGrab.grab()
+                
+                # Resize if it's too large to save inference time (max 1920x1080)
+                screenshot.thumbnail((1920, 1080))
+                
+                # Save to temp
+                temp_dir = tempfile.gettempdir()
+                vision_path = os.path.join(temp_dir, f"zyra_vision_{int(time.time())}.jpg")
+                screenshot.save(vision_path, format="JPEG", quality=85)
+                
+                image_paths.append(vision_path)
+                has_images = True
+                
+                if display_prompt:
+                    display_prompt += "\n\n[Attached: Screen Context]"
+                else:
+                    display_prompt = "[Attached: Screen Context]"
+                    prompt = "Tolong jelaskan apa yang ada di layar saya." # Default prompt
+                    
+                self.vision_btn.setChecked(False) # Auto turn off after capturing
+            except Exception as e:
+                self.logger.error(f"Failed to capture screen: {e}")
         
         if self.attached_files:
             import os
@@ -1149,16 +1212,16 @@ class ChatPage(QWidget):
         import os, sys
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
-        current_version = "v1.0.62" # The base bundled version
+        current_version = "v1.0.63" # The base bundled version
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.62")
+                    current_version = json.load(f).get("version", "v1.0.63")
             except Exception:
                 pass
                 
-        pub_version = v_info.get("version", "v1.0.62")
+        pub_version = v_info.get("version", "v1.0.63")
         
         self.check_update_btn.setText("Check for Updates")
         self.check_update_btn.setEnabled(True)
@@ -1328,13 +1391,13 @@ class ChatPage(QWidget):
                 if resp.status_code == 200:
                     v_info = resp.json()
                     
-                    current_version = "v1.0.62"
+                    current_version = "v1.0.63"
                     current_v_path = os.path.join(user_data_dir, "current_version.json")
                     if os.path.exists(current_v_path):
                         with open(current_v_path, 'r') as f:
-                            current_version = json.load(f).get("version", "v1.0.62")
+                            current_version = json.load(f).get("version", "v1.0.63")
                             
-                    pub_version = v_info.get("version", "v1.0.62")
+                    pub_version = v_info.get("version", "v1.0.63")
                     
                     if self._parse_version(pub_version) > self._parse_version(current_version):
                         signals.new_update.emit(v_info)
