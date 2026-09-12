@@ -3,57 +3,84 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 import re
 
-def highlight_python_code(code: str) -> str:
-    # Escape HTML
-    code = code.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+def highlight_universal_code(code: str, language: str) -> str:
+    import pygments
+    from pygments.lexers import get_lexer_by_name, guess_lexer
+    from pygments.formatters import HtmlFormatter
+    from pygments.util import ClassNotFound
     
-    # Colors
-    c_kw = "#c678dd"   # Purple (Keywords)
-    c_str = "#98c379"  # Green (Strings)
-    c_com = "#5c6370"  # Gray (Comments)
-    c_fun = "#61afef"  # Blue (Functions)
-    c_num = "#d19a66"  # Orange (Numbers)
-    c_cls = "#e5c07b"  # Yellow (Classes)
-
-    keywords = r'\b(def|class|if|elif|else|while|for|return|import|from|as|try|except|with|True|False|None|and|or|not|in|is|pass|break|continue|yield|lambda)\b'
-    
-    pattern = r'(#.*|"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'|"[^"\\]*(?:\\.[^"\\]*)*"|\'[^\'\\]*(?:\\.[^\'\\]*)*\'|\b[a-zA-Z_]\w*\b|\b\d+\b)'
-    tokens = re.split(pattern, code)
-    
-    res = []
-    for i, tok in enumerate(tokens):
-        if not tok: continue
-        if tok.startswith('#'):
-            res.append(f'<span style="color: {c_com}">{tok}</span>')
-        elif tok.startswith('"') or tok.startswith("'"):
-            res.append(f'<span style="color: {c_str}">{tok}</span>')
-        elif re.match(keywords, tok):
-            res.append(f'<span style="color: {c_kw}">{tok}</span>')
-        elif re.match(r'^\d+$', tok):
-            res.append(f'<span style="color: {c_num}">{tok}</span>')
+    code = code.strip()
+    if not code:
+        return ""
+        
+    try:
+        if language:
+            lexer = get_lexer_by_name(language, stripall=True)
         else:
-            if i >= 2 and tokens[i-2] == 'def':
-                res.append(f'<span style="color: {c_fun}">{tok}</span>')
-            elif i >= 2 and tokens[i-2] == 'class':
-                res.append(f'<span style="color: {c_cls}">{tok}</span>')
-            else:
-                res.append(tok)
-                
-    # Newlines to <br> for QLabel
-    return "".join(res).replace('\n', '<br>')
+            lexer = guess_lexer(code)
+    except ClassNotFound:
+        from pygments.lexers.special import TextLexer
+        lexer = TextLexer()
+        
+    # We use noclasses=True to generate inline CSS styles which QLabel/QTextBrowser can render
+    # 'one-dark' is a popular VSCode-like dark theme
+    formatter = HtmlFormatter(style="one-dark", noclasses=True, cssclass="", prestyles="margin: 0; padding: 0;")
+    highlighted = pygments.highlight(code, lexer, formatter)
+    
+    # Remove the surrounding <div class=""><pre>...</pre></div> wrapper that Pygments adds, 
+    # because we want to inject it inside our QLabel directly with our own formatting.
+    # Pygments usually outputs: <div ...><pre style="...">code</pre></div>
+    
+    # Extract just the content inside <pre>...</pre>
+    match = re.search(r'<pre[^>]*>(.*?)</pre>', highlighted, flags=re.DOTALL)
+    if match:
+        content = match.group(1)
+        # Convert newlines to <br> for QLabel
+        return content.replace('\n', '<br>')
+        
+    return highlighted.replace('\n', '<br>')
 
 def parse_simple_markdown(text: str) -> str:
     # Escape HTML first
     text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    
     # Inline code
     text = re.sub(r'`(.*?)`', r'<code style="background-color: #2f2f2f; padding: 2px 4px; border-radius: 4px; font-family: Consolas; color: #e5c07b;">\1</code>', text)
     # Bold
     text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
     # Italics
     text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)
-    # Newlines
-    text = text.replace('\n', '<br>')
-    return text
+    
+    # Simple unordered lists (bullet points)
+    # Replace lines starting with "- " or "* " with <li>
+    lines = text.split('\n')
+    in_list = False
+    result_lines = []
+    
+    for line in lines:
+        match = re.match(r'^\s*[\-\*]\s+(.*)', line)
+        if match:
+            if not in_list:
+                result_lines.append('<ul style="margin-top: 4px; margin-bottom: 4px; padding-left: 20px;">')
+                in_list = True
+            result_lines.append(f'<li>{match.group(1)}</li>')
+        else:
+            if in_list:
+                result_lines.append('</ul>')
+                in_list = False
+            result_lines.append(line)
+            
+    if in_list:
+        result_lines.append('</ul>')
+        
+    # Join and replace remaining newlines (not inside ul/li) with <br>
+    # To avoid <br> between <li> tags, we join with \n then selectively replace.
+    joined = '\n'.join(result_lines)
+    # A bit hacky but works for QLabel: replace \n with <br> unless it's adjacent to block tags
+    joined = re.sub(r'(?<!>)\n', '<br>', joined)
+    joined = joined.replace('\n', '') # Remove remaining newlines to prevent weird spacing in QLabel
+    
+    return joined
 
 class CodeBlockWidget(QWidget):
     def __init__(self, code: str = "", language: str = ""):
@@ -110,12 +137,10 @@ class CodeBlockWidget(QWidget):
         self.raw_code = code
         self.language = language
         self.lang_lbl.setText(language if language else "code")
-        if language.lower() == "python":
-            highlighted = highlight_python_code(code.strip())
-            self.code_lbl.setText(highlighted)
-        else:
-            safe_code = code.strip().replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('\n', '<br>')
-            self.code_lbl.setText(safe_code)
+        
+        # Use pygments for all languages
+        highlighted = highlight_universal_code(code.strip(), language)
+        self.code_lbl.setText(highlighted)
 
     def download_file(self):
         from PySide6.QtWidgets import QFileDialog
