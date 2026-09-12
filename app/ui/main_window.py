@@ -52,12 +52,12 @@ class MainWindow(QMainWindow):
         import json, os
         
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
-        current_version = "v1.0.59"
+        current_version = "v1.0.60"
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.59")
+                    current_version = json.load(f).get("version", "v1.0.60")
             except:
                 pass
                 
@@ -244,10 +244,10 @@ class MainWindow(QMainWindow):
             if getattr(sys, 'frozen', False):
                 # When compiled, sys.executable is the .exe itself
                 exe_path = sys.executable
-                os.execv(exe_path, [exe_path])
+                subprocess.Popen([exe_path])
             else:
                 python_exe = sys.executable
                 run_script = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "run.py")
-                # Use os.execv to replace the current process entirely. This avoids child-process termination issues.
-                os.execv(python_exe, [python_exe, run_script])
+                subprocess.Popen([python_exe, run_script])
+            QApplication.instance().quit()
 
