@@ -989,17 +989,38 @@ class ChatPage(QWidget):
                 display_prompt += f"📎 {f_name}\n"
             display_prompt = display_prompt.strip()
             
-            attachment_context = "\n\n--- ATTACHED FILES ---\n"
+            document_paths = []
             for fp in self.attached_files:
-                import os
                 ext = os.path.splitext(fp)[1].lower()
                 if ext in ['.png', '.jpg', '.jpeg']:
                     has_images = True
                     image_paths.append(fp)
                 else:
-                    content = self._extract_file_content(fp)
-                    attachment_context += f"\nFile: {os.path.basename(fp)}\n```\n{content}\n```\n"
-            attachment_context += "----------------------\n"
+                    document_paths.append(fp)
+                    
+            if document_paths:
+                from app.core.rag import retrieve_relevant_context
+                from PySide6.QtWidgets import QApplication
+                
+                def update_progress(msg):
+                    self.show_toast(msg, type="info", duration=1500)
+                    QApplication.processEvents()
+                    
+                model_name = self.ollama_model_combo.currentData()
+                if not model_name:
+                    model_name = "llama3.2:1b" # fallback
+                    
+                try:
+                    attachment_context = retrieve_relevant_context(
+                        query=prompt,
+                        file_paths=document_paths,
+                        model_name=model_name,
+                        top_k=3,
+                        progress_callback=update_progress
+                    )
+                except Exception as e:
+                    self.logger.error(f"RAG Error: {e}")
+                    self.show_toast(f"RAG Error: {e}", type="error", duration=3000)
             
             # Clear attachments after sending
             self.attached_files.clear()
@@ -1205,16 +1226,16 @@ class ChatPage(QWidget):
         import os, sys
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
-        current_version = "v1.0.67" # The base bundled version
+        current_version = "v1.0.68" # The base bundled version
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.67")
+                    current_version = json.load(f).get("version", "v1.0.68")
             except Exception:
                 pass
                 
-        pub_version = v_info.get("version", "v1.0.67")
+        pub_version = v_info.get("version", "v1.0.68")
         
         self.check_update_btn.setText("Check for Updates")
         self.check_update_btn.setEnabled(True)
@@ -1384,13 +1405,13 @@ class ChatPage(QWidget):
                 if resp.status_code == 200:
                     v_info = resp.json()
                     
-                    current_version = "v1.0.67"
+                    current_version = "v1.0.68"
                     current_v_path = os.path.join(user_data_dir, "current_version.json")
                     if os.path.exists(current_v_path):
                         with open(current_v_path, 'r') as f:
-                            current_version = json.load(f).get("version", "v1.0.67")
+                            current_version = json.load(f).get("version", "v1.0.68")
                             
-                    pub_version = v_info.get("version", "v1.0.67")
+                    pub_version = v_info.get("version", "v1.0.68")
                     
                     if self._parse_version(pub_version) > self._parse_version(current_version):
                         signals.new_update.emit(v_info)
