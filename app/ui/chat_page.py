@@ -1295,16 +1295,16 @@ class ChatPage(QWidget):
         import os, sys
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
-        current_version = "v1.0.81" # The base bundled version
+        current_version = "v1.0.82" # The base bundled version
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.81")
+                    current_version = json.load(f).get("version", "v1.0.82")
             except Exception:
                 pass
                 
-        pub_version = v_info.get("version", "v1.0.81")
+        pub_version = v_info.get("version", "v1.0.82")
         
         self.check_update_btn.setText("Check for Updates")
         self.check_update_btn.setEnabled(True)
@@ -1474,13 +1474,13 @@ class ChatPage(QWidget):
                 if resp.status_code == 200:
                     v_info = resp.json()
                     
-                    current_version = "v1.0.81"
+                    current_version = "v1.0.82"
                     current_v_path = os.path.join(user_data_dir, "current_version.json")
                     if os.path.exists(current_v_path):
                         with open(current_v_path, 'r') as f:
-                            current_version = json.load(f).get("version", "v1.0.81")
+                            current_version = json.load(f).get("version", "v1.0.82")
                             
-                    pub_version = v_info.get("version", "v1.0.81")
+                    pub_version = v_info.get("version", "v1.0.82")
                     
                     if self._parse_version(pub_version) > self._parse_version(current_version):
                         signals.new_update.emit(v_info)
@@ -1528,9 +1528,16 @@ class ChatPage(QWidget):
     def on_mic_clicked(self):
         """Toggles recording when the mic button is clicked."""
         if not self.voice_assistant:
-            from app.core.voice import VoiceAssistant
-            self.voice_assistant = VoiceAssistant()
-            
+            try:
+                from app.core.voice import VoiceAssistant
+                self.voice_assistant = VoiceAssistant()
+            except ImportError:
+                Toast(self, "Fitur suara belum tersedia di versi ringan ini.", timeout=3000).show()
+                return
+            except Exception as e:
+                Toast(self, f"Error: {e}", timeout=3000).show()
+                return
+                
         if not self.voice_assistant.is_recording:
             # Start Recording
             self.mic_btn.setIcon(self.icon_mic_rec)
