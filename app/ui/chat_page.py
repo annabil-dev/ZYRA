@@ -539,7 +539,7 @@ class ChatPage(QWidget):
         
         def worker():
             try:
-                resp = httpx.get("http://localhost:11434/api/tags", timeout=0.5)
+                resp = httpx.get("http://localhost:11434/api/tags", timeout=3.0)
                 if resp.status_code != 200:
                     if not quiet:
                         def bad_status():
@@ -640,7 +640,7 @@ class ChatPage(QWidget):
             
             def check_health():
                 try:
-                    resp = httpx.get("http://localhost:11434", timeout=0.5)
+                    resp = httpx.get("http://localhost:11434", timeout=3.0)
                     if resp.status_code == 200:
                         if not quiet:
                             def on_success():
