@@ -252,7 +252,7 @@ class ChatPage(QWidget):
         
         # Bottom part of input frame: Attach button, Text input & Send button
         bottom_input_layout = QHBoxLayout()
-        bottom_input_layout.setSpacing(8)
+        bottom_input_layout.setSpacing(6)
         bottom_input_layout.setContentsMargins(0, 0, 0, 0)
         
         self.attach_btn = QPushButton("+")
@@ -292,14 +292,14 @@ class ChatPage(QWidget):
         self.mic_btn.setIcon(self.icon_mic)
         self.mic_btn.setIconSize(QSize(22, 22))
         self.mic_btn.setObjectName("MicBtn")
-        self.mic_btn.setFixedSize(36, 36)
+        self.mic_btn.setFixedSize(32, 32)
         self.mic_btn.setCursor(Qt.PointingHandCursor)
         self.mic_btn.setToolTip("Klik untuk merekam suara")
         self.mic_btn.setStyleSheet("""
             QPushButton { 
                 background-color: transparent; 
                 border: none; 
-                border-radius: 18px; 
+                border-radius: 16px; 
                 padding: 0px;
             }
             QPushButton:hover { 
@@ -324,12 +324,12 @@ class ChatPage(QWidget):
         self.send_btn.setIcon(self.icon_send)
         self.send_btn.setIconSize(QSize(20, 20))
         self.send_btn.setObjectName("SendBtn")
-        self.send_btn.setFixedSize(40, 40)
+        self.send_btn.setFixedSize(36, 36)
         self.send_btn.setCursor(Qt.PointingHandCursor)
         self.send_btn.setStyleSheet("""
             QPushButton {
                 background-color: #38bdf8;
-                border-radius: 20px;
+                border-radius: 18px;
             }
             QPushButton:hover { background-color: #7dd3fc; }
             QPushButton:disabled { background-color: #475569; }
@@ -1301,16 +1301,16 @@ class ChatPage(QWidget):
         import os, sys
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
-        current_version = "v1.0.76" # The base bundled version
+        current_version = "v1.0.77" # The base bundled version
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.76")
+                    current_version = json.load(f).get("version", "v1.0.77")
             except Exception:
                 pass
                 
-        pub_version = v_info.get("version", "v1.0.76")
+        pub_version = v_info.get("version", "v1.0.77")
         
         self.check_update_btn.setText("Check for Updates")
         self.check_update_btn.setEnabled(True)
@@ -1480,13 +1480,13 @@ class ChatPage(QWidget):
                 if resp.status_code == 200:
                     v_info = resp.json()
                     
-                    current_version = "v1.0.76"
+                    current_version = "v1.0.77"
                     current_v_path = os.path.join(user_data_dir, "current_version.json")
                     if os.path.exists(current_v_path):
                         with open(current_v_path, 'r') as f:
-                            current_version = json.load(f).get("version", "v1.0.76")
+                            current_version = json.load(f).get("version", "v1.0.77")
                             
-                    pub_version = v_info.get("version", "v1.0.76")
+                    pub_version = v_info.get("version", "v1.0.77")
                     
                     if self._parse_version(pub_version) > self._parse_version(current_version):
                         signals.new_update.emit(v_info)
