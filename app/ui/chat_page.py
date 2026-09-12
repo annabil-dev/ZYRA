@@ -51,6 +51,8 @@ class ChatPage(QWidget):
         self.model = None
         self.generator = None
         self.worker = None
+        self.voice_assistant = None
+        self.voice_worker = None
         self.current_session_id = None
         self._current_ai_response = ""
         
@@ -245,6 +247,30 @@ class ChatPage(QWidget):
         """)
         self.attach_btn.clicked.connect(self.on_attach_click)
         
+        self.mic_btn = QPushButton("🎙️")
+        self.mic_btn.setObjectName("MicBtn")
+        self.mic_btn.setFixedSize(32, 32)
+        self.mic_btn.setCursor(Qt.PointingHandCursor)
+        self.mic_btn.setToolTip("Tahan untuk merekam suara (Push to Talk)")
+        self.mic_btn.setStyleSheet("""
+            QPushButton { 
+                background-color: transparent; 
+                border: none; 
+                border-radius: 16px; 
+                font-size: 20px; 
+                color: #a3a3a3; 
+                padding: 0px;
+            }
+            QPushButton:hover { 
+                color: white; 
+            }
+            QPushButton:pressed {
+                color: #ef4444; /* Red when recording */
+            }
+        """)
+        self.mic_btn.pressed.connect(self.on_mic_pressed)
+        self.mic_btn.released.connect(self.on_mic_released)
+        
         self.input_field = QLineEdit()
         self.input_field.setPlaceholderText("Message ZYRA...")
         self.input_field.setStyleSheet("""
@@ -275,6 +301,7 @@ class ChatPage(QWidget):
         self.send_btn.clicked.connect(self.on_send_click)
         
         bottom_input_layout.addWidget(self.attach_btn)
+        bottom_input_layout.addWidget(self.mic_btn)
         bottom_input_layout.addWidget(self.input_field)
         bottom_input_layout.addWidget(self.send_btn)
         
@@ -1021,6 +1048,49 @@ class ChatPage(QWidget):
                 except Exception as e:
                     self.logger.error(f"RAG Error: {e}")
                     self.show_toast(f"RAG Error: {e}", type="error", duration=3000)
+
+    def on_mic_pressed(self):
+        """Starts recording when the mic button is pressed."""
+        if not self.voice_assistant:
+            from app.core.voice import VoiceAssistant
+            self.voice_assistant = VoiceAssistant()
+            
+        self.input_field.setPlaceholderText("Merekam suara...")
+        self.input_field.setReadOnly(True)
+        self.voice_assistant.start_recording()
+        
+    def on_mic_released(self):
+        """Stops recording and starts the transcription worker."""
+        if not self.voice_assistant:
+            return
+            
+        self.input_field.setPlaceholderText("Memproses suara...")
+        
+        from app.workers.voice_worker import VoiceWorker
+        self.voice_worker = VoiceWorker(self.voice_assistant, parent=self)
+        self.voice_worker.transcription_complete.connect(self.on_voice_transcribed)
+        self.voice_worker.error_occurred.connect(self.on_voice_error)
+        self.voice_worker.start()
+        
+    def on_voice_transcribed(self, text: str):
+        self.input_field.setPlaceholderText("Message ZYRA...")
+        self.input_field.setReadOnly(False)
+        
+        if text:
+            # Append to existing text with a space, or just set it
+            current = self.input_field.text()
+            if current:
+                self.input_field.setText(f"{current} {text}")
+            else:
+                self.input_field.setText(text)
+                
+            self.input_field.setFocus()
+            
+    def on_voice_error(self, err: str):
+        self.input_field.setPlaceholderText("Message ZYRA...")
+        self.input_field.setReadOnly(False)
+        self.logger.error(f"Voice Error: {err}")
+        self.show_toast("Gagal memproses suara. Pastikan PyTorch ter-install dengan benar.", type="error", duration=3000)
             
             # Clear attachments after sending
             self.attached_files.clear()
@@ -1226,16 +1296,16 @@ class ChatPage(QWidget):
         import os, sys
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
-        current_version = "v1.0.71" # The base bundled version
+        current_version = "v1.0.72" # The base bundled version
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.71")
+                    current_version = json.load(f).get("version", "v1.0.72")
             except Exception:
                 pass
                 
-        pub_version = v_info.get("version", "v1.0.71")
+        pub_version = v_info.get("version", "v1.0.72")
         
         self.check_update_btn.setText("Check for Updates")
         self.check_update_btn.setEnabled(True)
@@ -1405,13 +1475,13 @@ class ChatPage(QWidget):
                 if resp.status_code == 200:
                     v_info = resp.json()
                     
-                    current_version = "v1.0.71"
+                    current_version = "v1.0.72"
                     current_v_path = os.path.join(user_data_dir, "current_version.json")
                     if os.path.exists(current_v_path):
                         with open(current_v_path, 'r') as f:
-                            current_version = json.load(f).get("version", "v1.0.71")
+                            current_version = json.load(f).get("version", "v1.0.72")
                             
-                    pub_version = v_info.get("version", "v1.0.71")
+                    pub_version = v_info.get("version", "v1.0.72")
                     
                     if self._parse_version(pub_version) > self._parse_version(current_version):
                         signals.new_update.emit(v_info)
