@@ -70,10 +70,6 @@ class MainWindow(QMainWindow):
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("Sidebar")
         self.sidebar.setStyleSheet("border: none; background-color: transparent;")
-        self.sidebar.setViewMode(QListWidget.IconMode)
-        self.sidebar.setMovement(QListWidget.Static)
-        self.sidebar.setFlow(QListWidget.TopToBottom)
-        self.sidebar.setSpacing(0)
         
         sidebar_data = [
             ("dashboard.svg", "Dashboard"),
@@ -110,7 +106,6 @@ class MainWindow(QMainWindow):
             else:
                 item.setText("?") # Fallback if SVG missing
                 
-            item.setSizeHint(QSize(70, 52)) # Force perfect centering box
             item.setToolTip(tooltip)
             self.sidebar.addItem(item)
             
