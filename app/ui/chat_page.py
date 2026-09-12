@@ -850,12 +850,22 @@ class ChatPage(QWidget):
             self.send_btn.setText("Stopping...")
             return
 
+        display_prompt = prompt
+        
         # Prepare context from attachments
         attachment_context = ""
         has_images = False
         image_paths = []
         
         if self.attached_files:
+            import os
+            file_names = [os.path.basename(f) for f in self.attached_files]
+            if display_prompt:
+                display_prompt += "\n\n"
+            for f_name in file_names:
+                display_prompt += f"📎 {f_name}\n"
+            display_prompt = display_prompt.strip()
+            
             attachment_context = "\n\n--- ATTACHED FILES ---\n"
             for fp in self.attached_files:
                 import os
@@ -884,7 +894,7 @@ class ChatPage(QWidget):
                 self.chat_widget.resizeEvent(QResizeEvent(self.chat_widget.size(), self.chat_widget.size()))
                     
         # Append context to prompt implicitly (user doesn't see the huge text in bubble)
-        full_prompt = prompt + attachment_context
+        full_prompt = display_prompt + attachment_context
             
         if not self.generator:
             QMessageBox.warning(self, "No Backend", "Please connect to an AI model first.")
@@ -892,7 +902,7 @@ class ChatPage(QWidget):
             
         # 1. Database - Create session if none
         if self.db_manager and self.db_manager.connection and not self.current_session_id:
-            title = prompt[:30] + "..." if len(prompt) > 30 else (prompt if prompt else "File Analysis")
+            title = display_prompt[:30] + "..." if len(display_prompt) > 30 else (display_prompt if display_prompt else "File Analysis")
             model_tag = self.ollama_model_combo.currentData() or self.ollama_model_combo.currentText()
             cursor = self.db_manager.connection.cursor()
             cursor.execute("INSERT INTO chat_sessions (title, model_name) VALUES (?, ?)", (title, model_tag))
@@ -904,12 +914,12 @@ class ChatPage(QWidget):
         if self.db_manager and self.db_manager.connection and self.current_session_id:
             cursor = self.db_manager.connection.cursor()
             cursor.execute("INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)", 
-                           (self.current_session_id, "user", prompt))
+                           (self.current_session_id, "user", display_prompt))
             cursor.execute("UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (self.current_session_id,))
             self.db_manager.connection.commit()
             
         # Append user prompt with right-aligned bubble
-        user_bubble = ChatBubbleWidget("user", prompt)
+        user_bubble = ChatBubbleWidget("user", display_prompt)
         self.chat_history_layout.addWidget(user_bubble)
         self._scroll_to_bottom()
         
