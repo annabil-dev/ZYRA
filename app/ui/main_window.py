@@ -39,10 +39,37 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # Sidebar
+        # Sidebar Container
+        sidebar_container = QWidget()
+        sidebar_container.setFixedWidth(70)
+        sidebar_layout = QVBoxLayout(sidebar_container)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(0)
+        
+        # Global Version Label
+        from PySide6.QtWidgets import QLabel
+        from PySide6.QtCore import Qt, QSize
+        import json, os
+        
+        user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
+        current_version = "v1.0.42"
+        current_v_path = os.path.join(user_data_dir, "current_version.json")
+        if os.path.exists(current_v_path):
+            try:
+                with open(current_v_path, 'r') as f:
+                    current_version = json.load(f).get("version", "v1.0.42")
+            except:
+                pass
+                
+        self.version_lbl = QLabel(current_version)
+        self.version_lbl.setAlignment(Qt.AlignCenter)
+        self.version_lbl.setStyleSheet("color: #64748b; font-size: 11px; font-weight: 800; padding-top: 15px; padding-bottom: 10px;")
+        sidebar_layout.addWidget(self.version_lbl)
+        
+        # Sidebar List
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("Sidebar")
-        self.sidebar.setFixedWidth(70)
+        self.sidebar.setStyleSheet("border: none; background-color: transparent;")
         
         sidebar_data = [
             ("dashboard.svg", "Dashboard"),
@@ -79,9 +106,11 @@ class MainWindow(QMainWindow):
             else:
                 item.setText("?") # Fallback if SVG missing
                 
-            item.setTextAlignment(Qt.AlignCenter)
+            item.setSizeHint(QSize(70, 52)) # Force perfect centering box
             item.setToolTip(tooltip)
             self.sidebar.addItem(item)
+            
+        sidebar_layout.addWidget(self.sidebar)
         
         # Pages Container
         self.pages = QStackedWidget()
@@ -105,7 +134,7 @@ class MainWindow(QMainWindow):
         
         self.sidebar.currentRowChanged.connect(self.pages.setCurrentIndex)
         
-        main_layout.addWidget(self.sidebar)
+        main_layout.addWidget(sidebar_container)
         main_layout.addWidget(self.pages)
         
         self.setup_hot_reload()

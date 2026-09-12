@@ -1139,46 +1139,37 @@ class ChatPage(QWidget):
             
     def _apply_update(self, v_info):
         import os, sys, time, zipfile, json, requests, io, shutil
+        import threading
+        from PySide6.QtCore import QObject, Signal
+        
         self.update_progress.setVisible(True)
         self.update_progress.setRange(0, 0) # indeterminate
         self.update_status_lbl.setText("Downloading from GitHub...")
         self.check_update_btn.setEnabled(False)
         self.repaint()
         
-        try:
-            # Download the main repository zip
-            resp = requests.get("https://github.com/annabil-dev/ZYRA/archive/refs/heads/main.zip", stream=True, timeout=30)
-            resp.raise_for_status()
+        class UpdateTaskSignals(QObject):
+            progress = Signal(str, int)
+            finished = Signal()
+            error = Signal(str)
             
-            self.update_status_lbl.setText("Extracting update...")
-            self.repaint()
-            
-            user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
-            update_dir = os.path.join(user_data_dir, "updates")
-            os.makedirs(update_dir, exist_ok=True)
-            
-            with zipfile.ZipFile(io.BytesIO(resp.content)) as zipf:
-                # The zip contains "ZYRA-main/app/..."
-                for member in zipf.namelist():
-                    if member.startswith("ZYRA-main/app/") or member.startswith("ZYRA-main/ai/"):
-                        # Extract and strip the "ZYRA-main/" prefix so it goes to updates/app/ or updates/ai/
-                        target_path = os.path.join(update_dir, member.replace("ZYRA-main/", ""))
-                        if member.endswith('/'):
-                            os.makedirs(target_path, exist_ok=True)
-                        else:
-                            os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                            with zipf.open(member) as source, open(target_path, "wb") as target:
-                                shutil.copyfileobj(source, target)
-                                
-            with open(os.path.join(user_data_dir, "current_version.json"), "w") as f:
-                json.dump(v_info, f)
+        self._update_task_signals = UpdateTaskSignals()
+        signals = self._update_task_signals
+        
+        def on_progress(text, pct):
+            self.update_status_lbl.setText(text)
+            if pct >= 0:
+                self.update_progress.setRange(0, 100)
+                self.update_progress.setValue(pct)
+            else:
+                self.update_progress.setRange(0, 0)
                 
+        def on_finished():
             self.update_status_lbl.setText("Update complete. Restarting...")
             self.update_progress.setRange(0, 100)
             self.update_progress.setValue(100)
-            self.repaint()
-            time.sleep(1)
             
+            # Restart
             exe_path = sys.executable
             if getattr(sys, 'frozen', False):
                 os.execv(exe_path, [exe_path])
@@ -1186,11 +1177,51 @@ class ChatPage(QWidget):
                 run_script = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "run.py")
                 os.execv(exe_path, [exe_path, run_script])
                 
-        except Exception as e:
-            QMessageBox.critical(self, "Update Failed", f"Failed to download/apply update:\n{e}")
+        def on_error(err_msg):
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Update Failed", f"Failed to download/apply update:\n{err_msg}")
             self.update_status_lbl.setText("Update failed.")
             self.update_progress.setVisible(False)
             self.check_update_btn.setEnabled(True)
+            
+        signals.progress.connect(on_progress)
+        signals.finished.connect(on_finished)
+        signals.error.connect(on_error)
+        
+        def worker():
+            try:
+                # Add headers to avoid caching
+                headers = {'Cache-Control': 'no-cache', 'Pragma': 'no-cache'}
+                resp = requests.get("https://github.com/annabil-dev/ZYRA/archive/refs/heads/main.zip", stream=True, timeout=30, headers=headers)
+                resp.raise_for_status()
+                
+                signals.progress.emit("Extracting update...", 50)
+                
+                user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
+                update_dir = os.path.join(user_data_dir, "updates")
+                os.makedirs(update_dir, exist_ok=True)
+                
+                with zipfile.ZipFile(io.BytesIO(resp.content)) as zipf:
+                    for member in zipf.namelist():
+                        if member.startswith("ZYRA-main/app/") or member.startswith("ZYRA-main/ai/"):
+                            target_path = os.path.join(update_dir, member.replace("ZYRA-main/", ""))
+                            if member.endswith('/'):
+                                os.makedirs(target_path, exist_ok=True)
+                            else:
+                                os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                                with zipf.open(member) as source, open(target_path, "wb") as target:
+                                    shutil.copyfileobj(source, target)
+                                    
+                with open(os.path.join(user_data_dir, "current_version.json"), "w") as f:
+                    json.dump(v_info, f)
+                    
+                signals.progress.emit("Finalizing...", 90)
+                time.sleep(0.5)
+                signals.finished.emit()
+            except Exception as e:
+                signals.error.emit(str(e))
+                
+        threading.Thread(target=worker, daemon=True).start()
 
     def _silent_update_check(self):
         import threading
