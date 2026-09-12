@@ -60,22 +60,16 @@ class VoiceAssistant:
             return ""
             
         audio_np = np.concatenate(audio_data, axis=0)
-        
-        # Save to temp wav file
-        temp_wav = os.path.join(os.environ.get("TEMP", "."), "temp_zyra_voice.wav")
-        wav.write(temp_wav, self.sample_rate, audio_np)
+        # Whisper expects 1D array of float32
+        audio_np = audio_np.flatten().astype(np.float32)
         
         # Make sure model is loaded
         self._load_model_if_needed()
         
         try:
-            # Transcribe
-            result = self.model.transcribe(temp_wav, language="id") # Default to Indonesian for ZYRA
+            # Transcribe directly from numpy array (bypasses ffmpeg dependency)
+            result = self.model.transcribe(audio_np, language="id") # Default to Indonesian for ZYRA
             text = result.get("text", "").strip()
-            
-            # Clean up
-            if os.path.exists(temp_wav):
-                os.remove(temp_wav)
                 
             return text
         except Exception as e:
