@@ -183,7 +183,7 @@ class ChatPage(QWidget):
         self.attach_btn.setCursor(Qt.PointingHandCursor)
         self.attach_btn.setStyleSheet("""
             QPushButton { 
-                background-color: #2f2f2f; 
+                background-color: transparent; 
                 border: none; 
                 border-radius: 16px; 
                 font-size: 20px; 
@@ -191,7 +191,6 @@ class ChatPage(QWidget):
                 padding: 0px;
             }
             QPushButton:hover { 
-                background-color: #3f3f3f; 
                 color: white; 
             }
         """)
@@ -532,66 +531,77 @@ class ChatPage(QWidget):
     def _auto_detect_and_connect(self, quiet=False):
         """Query Ollama for installed models, populate dropdown, auto-connect to the best one."""
         import httpx
+        import threading
         
         if not quiet:
             self.status_lbl.setText("Status: Auto-detecting models...")
         self.repaint()
         
-        try:
-            resp = httpx.get("http://localhost:11434/api/tags", timeout=0.5)
-            if resp.status_code != 200:
-                if not quiet:
-                    self.status_lbl.setText("Status: Ollama not responding")
-                return
-            
-            data = resp.json()
-            installed_tags = {m["name"] for m in data.get("models", [])}
-            
-            # Match installed models against our priority list (best last)
-            matched = []
-            for display_name, tag, size_gb in MODEL_PRIORITY:
-                # Ollama tags may include ':latest' suffix
-                tag_variants = [tag, tag + ":latest", tag.split(":")[0] + ":latest"]
-                if any(t in installed_tags for t in tag_variants):
-                    matched.append((display_name, tag, size_gb))
-            
-            # Also add any installed models NOT in our priority list
-            known_tags = {tag for _, tag, _ in MODEL_PRIORITY}
-            for installed_tag in installed_tags:
-                base = installed_tag.replace(":latest", "")
-                if base not in known_tags and installed_tag not in known_tags:
-                    matched.append((installed_tag, base, 0))
-            
-            if not matched:
-                if not quiet:
-                    self.status_lbl.setText("Status: No Ollama models found")
-                    self.show_toast("No models installed in Ollama. Pull a model first: ollama pull qwen2.5:32b", type="warning", duration=8000)
-                return
-            
-            # Populate dropdown — best model last in list, but first in combo
-            matched.sort(key=lambda x: x[2], reverse=True)
-            
-            # Temporarily disconnect to avoid triggering load_model on clear
-            self.ollama_model_combo.currentIndexChanged.disconnect(self.load_model)
-            self.ollama_model_combo.clear()
-            for display_name, tag, size in matched:
-                self.ollama_model_combo.addItem(f"{display_name}", userData=tag)
-            self.ollama_model_combo.currentIndexChanged.connect(self.load_model)
-            
-            # Auto-connect
-            best_name, best_tag, best_size = matched[0]
-            if not quiet:
-                self.show_toast(f"Auto-detected {len(matched)} installed model(s). Best available: {best_name} ({best_size:.0f} GB)", type="info")
+        def worker():
+            try:
+                resp = httpx.get("http://localhost:11434/api/tags", timeout=0.5)
+                if resp.status_code != 200:
+                    if not quiet:
+                        QTimer.singleShot(0, lambda: self.status_lbl.setText("Status: Ollama not responding"))
+                    return
                 
-            self._load_ollama_model(quiet=quiet)
-            
-        except Exception as e:
-            if not quiet:
-                self.status_lbl.setText("Status: Ollama offline. Retrying...")
-                if not hasattr(self, '_ollama_offline_warned'):
-                    self.show_toast("Could not reach Ollama engine. Auto-retrying in the background...", type="warning")
-                    self._ollama_offline_warned = True
-                QTimer.singleShot(5000, self._auto_detect_and_connect)
+                data = resp.json()
+                installed_tags = {m["name"] for m in data.get("models", [])}
+                
+                # Match installed models against our priority list (best last)
+                matched = []
+                for display_name, tag, size_gb in MODEL_PRIORITY:
+                    # Ollama tags may include ':latest' suffix
+                    tag_variants = [tag, tag + ":latest", tag.split(":")[0] + ":latest"]
+                    if any(t in installed_tags for t in tag_variants):
+                        matched.append((display_name, tag, size_gb))
+                
+                # Also add any installed models NOT in our priority list
+                known_tags = {tag for _, tag, _ in MODEL_PRIORITY}
+                for installed_tag in installed_tags:
+                    base = installed_tag.replace(":latest", "")
+                    if base not in known_tags and installed_tag not in known_tags:
+                        matched.append((installed_tag, base, 0))
+                
+                if not matched:
+                    if not quiet:
+                        def no_models():
+                            self.status_lbl.setText("Status: No Ollama models found")
+                            self.show_toast("No models installed in Ollama. Pull a model first: ollama pull qwen2.5:32b", type="warning", duration=8000)
+                        QTimer.singleShot(0, no_models)
+                    return
+                
+                # Populate dropdown — best model last in list, but first in combo
+                matched.sort(key=lambda x: x[2], reverse=True)
+                
+                def update_ui():
+                    # Temporarily disconnect to avoid triggering load_model on clear
+                    self.ollama_model_combo.currentIndexChanged.disconnect(self.load_model)
+                    self.ollama_model_combo.clear()
+                    for display_name, tag, size in matched:
+                        self.ollama_model_combo.addItem(f"{display_name}", userData=tag)
+                    self.ollama_model_combo.currentIndexChanged.connect(self.load_model)
+                    
+                    # Auto-connect
+                    best_name, best_tag, best_size = matched[0]
+                    if not quiet:
+                        self.show_toast(f"Auto-detected {len(matched)} installed model(s). Best available: {best_name} ({best_size:.0f} GB)", type="info")
+                        
+                    self._load_ollama_model(quiet=quiet)
+                    
+                QTimer.singleShot(0, update_ui)
+                
+            except Exception as e:
+                def on_error():
+                    if not quiet:
+                        self.status_lbl.setText("Status: Ollama offline. Retrying...")
+                        if not hasattr(self, '_ollama_offline_warned'):
+                            self.show_toast("Could not reach Ollama engine. Auto-retrying in the background...", type="warning")
+                            self._ollama_offline_warned = True
+                        QTimer.singleShot(5000, self._auto_detect_and_connect)
+                QTimer.singleShot(0, on_error)
+                
+        threading.Thread(target=worker, daemon=True).start()
 
     def load_model(self):
         """Loads model from the selected backend."""
@@ -621,20 +631,29 @@ class ChatPage(QWidget):
             
             # Quick health check — try to reach the Ollama server
             import httpx
-            try:
-                resp = httpx.get("http://localhost:11434", timeout=0.5)
-                if resp.status_code == 200:
-                    if not quiet:
-                        self.status_lbl.setText(f"Status: Connected — {display_name}")
-                        self.show_toast(f"Connected to local Ollama engine. Model: {model_tag}. Ready to generate.", type="success")
-                else:
-                    raise ConnectionError(f"Ollama returned status {resp.status_code}")
-            except Exception:
-                if not quiet:
-                    self.status_lbl.setText(f"Status: Ollama offline — will retry on send")
-                    self.show_toast(f"Warning: Ollama offline at localhost. Model set to {model_tag}. Will auto-retry on send.", type="warning", duration=8000)
+            import threading
             
-            self.load_btn.setEnabled(True)
+            def check_health():
+                try:
+                    resp = httpx.get("http://localhost:11434", timeout=0.5)
+                    if resp.status_code == 200:
+                        if not quiet:
+                            def on_success():
+                                self.status_lbl.setText(f"Status: Connected — {display_name}")
+                                self.show_toast(f"Connected to local Ollama engine. Model: {model_tag}. Ready to generate.", type="success")
+                            QTimer.singleShot(0, on_success)
+                    else:
+                        raise ConnectionError(f"Ollama returned status {resp.status_code}")
+                except Exception:
+                    if not quiet:
+                        def on_fail():
+                            self.status_lbl.setText(f"Status: Ollama offline — will retry on send")
+                            self.show_toast(f"Warning: Ollama offline at localhost. Model set to {model_tag}. Will auto-retry on send.", type="warning", duration=8000)
+                        QTimer.singleShot(0, on_fail)
+                finally:
+                    QTimer.singleShot(0, lambda: self.load_btn.setEnabled(True))
+            
+            threading.Thread(target=check_health, daemon=True).start()
             
         except Exception as e:
             import traceback
@@ -1083,30 +1102,38 @@ class ChatPage(QWidget):
             self.check_update_btn.setEnabled(True)
 
     def _silent_update_check(self):
-        import os, sys, json, requests
-        user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
-        
-        try:
-            resp = requests.get("https://raw.githubusercontent.com/annabil-dev/ZYRA/main/publish/version.json", timeout=3)
-            if resp.status_code == 200:
-                v_info = resp.json()
+        import threading
+        def worker():
+            import os, sys, json, requests
+            user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
+            
+            try:
+                resp = requests.get("https://raw.githubusercontent.com/annabil-dev/ZYRA/main/publish/version.json", timeout=3)
+                if resp.status_code == 200:
+                    v_info = resp.json()
+                    
+                    current_version = "v1.0.13"
+                    current_v_path = os.path.join(user_data_dir, "current_version.json")
+                    if os.path.exists(current_v_path):
+                        with open(current_v_path, 'r') as f:
+                            current_version = json.load(f).get("version", "v1.0.13")
+                            
+                    pub_version = v_info.get("version", "v1.0.13")
+                    
+                    if self._parse_version(pub_version) > self._parse_version(current_version):
+                        def update_ui_new():
+                            self.update_status_lbl.setText(f"🚀 New Update Available (Patch {pub_version})")
+                            self.update_status_lbl.setStyleSheet("color: #10b981; font-weight: bold;")
+                        QTimer.singleShot(0, update_ui_new)
+                    else:
+                        def update_ui_old():
+                            self.update_status_lbl.setText("App is up to date.")
+                            self.update_status_lbl.setStyleSheet("")
+                        QTimer.singleShot(0, update_ui_old)
+            except Exception:
+                pass
                 
-                current_version = "v1.0.13"
-                current_v_path = os.path.join(user_data_dir, "current_version.json")
-                if os.path.exists(current_v_path):
-                    with open(current_v_path, 'r') as f:
-                        current_version = json.load(f).get("version", "v1.0.13")
-                        
-                pub_version = v_info.get("version", "v1.0.13")
-                
-                if self._parse_version(pub_version) > self._parse_version(current_version):
-                    self.update_status_lbl.setText(f"🚀 New Update Available (Patch {pub_version})")
-                    self.update_status_lbl.setStyleSheet("color: #10b981; font-weight: bold;")
-                else:
-                    self.update_status_lbl.setText("App is up to date.")
-                    self.update_status_lbl.setStyleSheet("")
-        except Exception:
-            pass
+        threading.Thread(target=worker, daemon=True).start()
 
     def on_generation_error(self, err: str):
         self.send_btn.setEnabled(True)
