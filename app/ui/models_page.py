@@ -90,6 +90,22 @@ CURATED_MODELS = [
         "params": "35B",
         "required_ram": 24,
         "description": "Spesialis RAG dan interaksi banyak dokumen sekaligus. Sangat akurat tapi super berat."
+    },
+    
+    # VISION (Multimodal)
+    {
+        "name": "Llama 3.2 Vision (11B)",
+        "tag": "llama3.2-vision:latest",
+        "params": "11B",
+        "required_ram": 8,
+        "description": "Model dari Meta yang bisa melihat layar dan menganalisis gambar. Wajib untuk Screen Context."
+    },
+    {
+        "name": "Llava (7B)",
+        "tag": "llava:latest",
+        "params": "7B",
+        "required_ram": 6,
+        "description": "Alternatif model vision yang ringan untuk menganalisis gambar dan layar."
     }
 ]
 
