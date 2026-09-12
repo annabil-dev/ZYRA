@@ -70,12 +70,12 @@ class MainWindow(QMainWindow):
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("Sidebar")
         self.sidebar.setStyleSheet("border: none; background-color: transparent;")
+        self.sidebar.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.sidebar.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
         sidebar_data = [
             ("dashboard.svg", "Dashboard"),
             ("chat.svg", "Chat"),
-            ("dataset.svg", "Dataset"),
-            ("training.svg", "Training"),
             ("models.svg", "Models"),
             ("settings.svg", "Settings")
         ]
@@ -117,16 +117,12 @@ class MainWindow(QMainWindow):
         
         self.dashboard_page = DashboardPage(self.hardware_info)
         self.chat_page = ChatPage(db_manager=self.db_manager)
-        self.dataset_page = PlaceholderPage("Dataset")
-        self.training_page = PlaceholderPage("Training")
         self.models_page = ModelsPage(self.hardware_info, self.chat_page)
         self.settings_page = SettingsPage(self.chat_page)
         # self.logs_page = LogsPage(self.log_file_path)
         
         self.pages.addWidget(self.dashboard_page)
         self.pages.addWidget(self.chat_page)
-        self.pages.addWidget(self.dataset_page)
-        self.pages.addWidget(self.training_page)
         self.pages.addWidget(self.models_page)
         self.pages.addWidget(self.settings_page)
         # self.pages.addWidget(self.logs_page)
