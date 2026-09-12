@@ -30,12 +30,11 @@ QListWidget#Sidebar {
 }
 
 QListWidget#Sidebar::item {
-    padding: 12px 0px;
-    border-radius: 10px;
-    margin: 6px 10px;
+    padding: 8px 0px;
+    border-radius: 12px;
+    margin: 8px 12px;
     color: #a1a1aa; /* Zinc 400 */
     font-weight: 500;
-    font-size: 22px;
 }
 
 QListWidget#Sidebar::item:hover {

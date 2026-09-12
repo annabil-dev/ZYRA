@@ -23,10 +23,11 @@ class DashboardPage(QWidget):
         import os, sys
         from PySide6.QtGui import QIcon, QPixmap
         
+        assets_dir = os.path.join(os.path.dirname(__file__), "assets", "icons")
         if getattr(sys, 'frozen', False):
-            assets_dir = os.path.join(sys._MEIPASS, "app", "ui", "assets", "icons")
-        else:
-            assets_dir = os.path.join(os.path.dirname(__file__), "assets", "icons")
+            meipass_dir = os.path.join(sys._MEIPASS, "app", "ui", "assets", "icons")
+            if os.path.exists(meipass_dir):
+                assets_dir = meipass_dir
             
         icon_path = os.path.join(assets_dir, icon)
         
