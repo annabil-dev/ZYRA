@@ -760,10 +760,21 @@ class ChatPage(QWidget):
         lbl = QLabel(f"📄 {filename}")
         layout.addWidget(lbl)
         
-        rm_btn = QPushButton("X")
+        rm_btn = QPushButton("✕")
         rm_btn.setFixedSize(20, 20)
         rm_btn.setCursor(Qt.PointingHandCursor)
-        rm_btn.setStyleSheet("background-color: #3f3f3f; color: #ef4444; border-radius: 10px; font-weight: bold;")
+        rm_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent; 
+                color: #ef4444; 
+                font-weight: bold; 
+                font-size: 14px;
+                border: none;
+            }
+            QPushButton:hover {
+                color: #f87171;
+            }
+        """)
         rm_btn.clicked.connect(lambda: self.remove_attachment(file_path, pill))
         layout.addWidget(rm_btn)
         
