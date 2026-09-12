@@ -247,29 +247,39 @@ class ChatPage(QWidget):
         """)
         self.attach_btn.clicked.connect(self.on_attach_click)
         
-        self.mic_btn = QPushButton("🎙️")
+        import os, sys
+        from PySide6.QtGui import QIcon
+        from PySide6.QtCore import QSize
+        
+        if getattr(sys, 'frozen', False):
+            assets_dir = os.path.join(sys._MEIPASS, "app", "ui", "assets", "icons")
+        else:
+            assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui", "assets", "icons")
+            
+        self.icon_mic = QIcon(os.path.join(assets_dir, "mic.svg"))
+        self.icon_mic_rec = QIcon(os.path.join(assets_dir, "mic_recording.svg"))
+        self.icon_send = QIcon(os.path.join(assets_dir, "send.svg"))
+        self.icon_stop = QIcon(os.path.join(assets_dir, "stop.svg"))
+        
+        self.mic_btn = QPushButton()
+        self.mic_btn.setIcon(self.icon_mic)
+        self.mic_btn.setIconSize(QSize(22, 22))
         self.mic_btn.setObjectName("MicBtn")
-        self.mic_btn.setFixedSize(32, 32)
+        self.mic_btn.setFixedSize(36, 36)
         self.mic_btn.setCursor(Qt.PointingHandCursor)
-        self.mic_btn.setToolTip("Tahan untuk merekam suara (Push to Talk)")
+        self.mic_btn.setToolTip("Klik untuk merekam suara")
         self.mic_btn.setStyleSheet("""
             QPushButton { 
                 background-color: transparent; 
                 border: none; 
-                border-radius: 16px; 
-                font-size: 20px; 
-                color: #a3a3a3; 
+                border-radius: 18px; 
                 padding: 0px;
             }
             QPushButton:hover { 
-                color: white; 
-            }
-            QPushButton:pressed {
-                color: #ef4444; /* Red when recording */
+                background-color: #334155; 
             }
         """)
-        self.mic_btn.pressed.connect(self.on_mic_pressed)
-        self.mic_btn.released.connect(self.on_mic_released)
+        self.mic_btn.clicked.connect(self.on_mic_clicked)
         
         self.input_field = QLineEdit()
         self.input_field.setPlaceholderText("Message ZYRA...")
@@ -283,20 +293,19 @@ class ChatPage(QWidget):
         """)
         self.input_field.returnPressed.connect(self.on_send_click)
         
-        self.send_btn = QPushButton("Send")
+        self.send_btn = QPushButton()
+        self.send_btn.setIcon(self.icon_send)
+        self.send_btn.setIconSize(QSize(20, 20))
         self.send_btn.setObjectName("SendBtn")
-        self.send_btn.setFixedWidth(80)
+        self.send_btn.setFixedSize(40, 40)
         self.send_btn.setCursor(Qt.PointingHandCursor)
         self.send_btn.setStyleSheet("""
             QPushButton {
                 background-color: #38bdf8;
-                color: #0f172a;
-                border-radius: 12px;
-                padding: 8px;
-                font-weight: bold;
+                border-radius: 20px;
             }
             QPushButton:hover { background-color: #7dd3fc; }
-            QPushButton:disabled { background-color: #475569; color: #94a3b8; }
+            QPushButton:disabled { background-color: #475569; }
         """)
         self.send_btn.clicked.connect(self.on_send_click)
         
@@ -494,7 +503,7 @@ class ChatPage(QWidget):
             self.send_btn.setEnabled(False)
         else:
             self.send_btn.setEnabled(True)
-            self.send_btn.setText("Send")
+            self.send_btn.setIcon(self.icon_send)
             self.send_btn.setStyleSheet("""
                 QPushButton {
                     background-color: #38bdf8;
@@ -603,7 +612,7 @@ class ChatPage(QWidget):
         if self.worker and self.worker.isRunning():
             if session_id == active_gen_id:
                 self.send_btn.setEnabled(True)
-                self.send_btn.setText("Stop")
+                self.send_btn.setIcon(self.icon_stop)
                 self.send_btn.setStyleSheet("""
                     QPushButton {
                         background-color: #ef4444; color: white; border-radius: 12px; padding: 8px; font-weight: bold;
@@ -617,7 +626,7 @@ class ChatPage(QWidget):
                 self.send_btn.setEnabled(False)
         else:
             self.send_btn.setEnabled(True)
-            self.send_btn.setText("Send")
+            self.send_btn.setIcon(self.icon_send)
             self.send_btn.setStyleSheet("""
                 QPushButton {
                     background-color: #38bdf8;
@@ -967,7 +976,7 @@ class ChatPage(QWidget):
             # Stop generation
             self.worker.stop()
             self.send_btn.setEnabled(False)
-            self.send_btn.setText("Stopping...")
+            self.send_btn.setIcon(self.icon_stop)
             return
 
         display_prompt = prompt
@@ -1124,7 +1133,7 @@ class ChatPage(QWidget):
                 history_msgs.pop()
         
         
-        self.send_btn.setText("Stop")
+        self.send_btn.setIcon(self.icon_stop)
         self.send_btn.setStyleSheet("background-color: #ef4444; border: 1px solid #dc2626;")
         
         # Reset generation state
@@ -1210,7 +1219,7 @@ class ChatPage(QWidget):
             self.db_manager.connection.commit()
             
         self.send_btn.setEnabled(True)
-        self.send_btn.setText("Send")
+        self.send_btn.setIcon(self.icon_send)
         self.send_btn.setStyleSheet("""
             QPushButton {
                 background-color: #38bdf8;
@@ -1254,16 +1263,16 @@ class ChatPage(QWidget):
         import os, sys
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
-        current_version = "v1.0.74" # The base bundled version
+        current_version = "v1.0.75" # The base bundled version
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.74")
+                    current_version = json.load(f).get("version", "v1.0.75")
             except Exception:
                 pass
                 
-        pub_version = v_info.get("version", "v1.0.74")
+        pub_version = v_info.get("version", "v1.0.75")
         
         self.check_update_btn.setText("Check for Updates")
         self.check_update_btn.setEnabled(True)
@@ -1433,13 +1442,13 @@ class ChatPage(QWidget):
                 if resp.status_code == 200:
                     v_info = resp.json()
                     
-                    current_version = "v1.0.74"
+                    current_version = "v1.0.75"
                     current_v_path = os.path.join(user_data_dir, "current_version.json")
                     if os.path.exists(current_v_path):
                         with open(current_v_path, 'r') as f:
-                            current_version = json.load(f).get("version", "v1.0.74")
+                            current_version = json.load(f).get("version", "v1.0.75")
                             
-                    pub_version = v_info.get("version", "v1.0.74")
+                    pub_version = v_info.get("version", "v1.0.75")
                     
                     if self._parse_version(pub_version) > self._parse_version(current_version):
                         signals.new_update.emit(v_info)
@@ -1452,7 +1461,7 @@ class ChatPage(QWidget):
 
     def on_generation_error(self, err: str):
         self.send_btn.setEnabled(True)
-        self.send_btn.setText("Send")
+        self.send_btn.setIcon(self.icon_send)
         self.send_btn.setStyleSheet("""
             QPushButton {
                 background-color: #38bdf8;
@@ -1469,28 +1478,36 @@ class ChatPage(QWidget):
         self._scroll_to_bottom()
         self._active_generation_session_id = None
 
-    def on_mic_pressed(self):
-        """Starts recording when the mic button is pressed."""
+    def on_mic_clicked(self):
+        """Toggles recording when the mic button is clicked."""
         if not self.voice_assistant:
             from app.core.voice import VoiceAssistant
             self.voice_assistant = VoiceAssistant()
             
-        self.input_field.setPlaceholderText("Merekam suara...")
-        self.input_field.setReadOnly(True)
-        self.voice_assistant.start_recording()
-        
-    def on_mic_released(self):
-        """Stops recording and starts the transcription worker."""
-        if not self.voice_assistant:
-            return
+        if not self.voice_assistant.is_recording:
+            # Start Recording
+            self.mic_btn.setIcon(self.icon_mic_rec)
+            self.mic_btn.setStyleSheet("""
+                QPushButton { background-color: transparent; border: none; border-radius: 18px; padding: 0px; }
+                QPushButton:hover { background-color: #fee2e2; }
+            """)
+            self.input_field.setPlaceholderText("Merekam suara... (Klik lagi untuk stop)")
+            self.input_field.setReadOnly(True)
+            self.voice_assistant.start_recording()
+        else:
+            # Stop Recording
+            self.mic_btn.setIcon(self.icon_mic)
+            self.mic_btn.setStyleSheet("""
+                QPushButton { background-color: transparent; border: none; border-radius: 18px; padding: 0px; }
+                QPushButton:hover { background-color: #334155; }
+            """)
+            self.input_field.setPlaceholderText("Memproses suara...")
             
-        self.input_field.setPlaceholderText("Memproses suara...")
-        
-        from app.workers.voice_worker import VoiceWorker
-        self.voice_worker = VoiceWorker(self.voice_assistant, parent=self)
-        self.voice_worker.transcription_complete.connect(self.on_voice_transcribed)
-        self.voice_worker.error_occurred.connect(self.on_voice_error)
-        self.voice_worker.start()
+            from app.workers.voice_worker import VoiceWorker
+            self.voice_worker = VoiceWorker(self.voice_assistant, parent=self)
+            self.voice_worker.transcription_complete.connect(self.on_voice_transcribed)
+            self.voice_worker.error_occurred.connect(self.on_voice_error)
+            self.voice_worker.start()
         
     def on_voice_transcribed(self, text: str):
         self.input_field.setPlaceholderText("Message ZYRA...")
