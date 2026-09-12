@@ -54,10 +54,6 @@ class ChatPage(QWidget):
         self.voice_assistant = None
         self.voice_worker = None
         self.tts_worker = None
-        self.audio_player = QMediaPlayer()
-        self.audio_output = QAudioOutput()
-        self.audio_player.setAudioOutput(self.audio_output)
-        self.audio_output.setVolume(1.0)
         self.current_session_id = None
         self._current_ai_response = ""
         
@@ -1264,13 +1260,17 @@ class ChatPage(QWidget):
 
         # Trigger TTS if enabled
         if self.tts_btn.isChecked() and self._current_ai_response.strip():
-            from app.workers.tts_worker import TTSWorker
-            if self.tts_worker and self.tts_worker.isRunning():
-                self.tts_worker.stop()
-                self.tts_worker.wait()
-            self.tts_worker = TTSWorker(self._current_ai_response, parent=self)
-            self.tts_worker.audio_ready.connect(self._play_tts_audio)
-            self.tts_worker.start()
+            try:
+                from app.workers.tts_worker import TTSWorker
+                if self.tts_worker and self.tts_worker.isRunning():
+                    self.tts_worker.stop()
+                    self.tts_worker.wait()
+                self.tts_worker = TTSWorker(self._current_ai_response, parent=self)
+                self.tts_worker.start()
+            except ImportError:
+                print("TTS Disabled: edge-tts is not installed in this environment.")
+            except Exception as e:
+                print(f"TTS Error: {e}")
 
 
     def _parse_version(self, v):
@@ -1301,16 +1301,16 @@ class ChatPage(QWidget):
         import os, sys
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
-        current_version = "v1.0.77" # The base bundled version
+        current_version = "v1.0.78" # The base bundled version
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.77")
+                    current_version = json.load(f).get("version", "v1.0.78")
             except Exception:
                 pass
                 
-        pub_version = v_info.get("version", "v1.0.77")
+        pub_version = v_info.get("version", "v1.0.78")
         
         self.check_update_btn.setText("Check for Updates")
         self.check_update_btn.setEnabled(True)
@@ -1480,13 +1480,13 @@ class ChatPage(QWidget):
                 if resp.status_code == 200:
                     v_info = resp.json()
                     
-                    current_version = "v1.0.77"
+                    current_version = "v1.0.78"
                     current_v_path = os.path.join(user_data_dir, "current_version.json")
                     if os.path.exists(current_v_path):
                         with open(current_v_path, 'r') as f:
-                            current_version = json.load(f).get("version", "v1.0.77")
+                            current_version = json.load(f).get("version", "v1.0.78")
                             
-                    pub_version = v_info.get("version", "v1.0.77")
+                    pub_version = v_info.get("version", "v1.0.78")
                     
                     if self._parse_version(pub_version) > self._parse_version(current_version):
                         signals.new_update.emit(v_info)
@@ -1518,13 +1518,17 @@ class ChatPage(QWidget):
 
         # Trigger TTS if enabled
         if self.tts_btn.isChecked() and self._current_ai_response.strip():
-            from app.workers.tts_worker import TTSWorker
-            if self.tts_worker and self.tts_worker.isRunning():
-                self.tts_worker.stop()
-                self.tts_worker.wait()
-            self.tts_worker = TTSWorker(self._current_ai_response, parent=self)
-            self.tts_worker.audio_ready.connect(self._play_tts_audio)
-            self.tts_worker.start()
+            try:
+                from app.workers.tts_worker import TTSWorker
+                if self.tts_worker and self.tts_worker.isRunning():
+                    self.tts_worker.stop()
+                    self.tts_worker.wait()
+                self.tts_worker = TTSWorker(self._current_ai_response, parent=self)
+                self.tts_worker.start()
+            except ImportError:
+                print("TTS Disabled: edge-tts is not installed in this environment.")
+            except Exception as e:
+                print(f"TTS Error: {e}")
 
 
     def on_mic_clicked(self):
@@ -1610,6 +1614,4 @@ class ChatPage(QWidget):
         if hasattr(self, 'worker') and self.worker:
             self.worker.set_security_response(allow)
 
-    def _play_tts_audio(self, filepath):
-        self.audio_player.setSource(QUrl.fromLocalFile(filepath))
-        self.audio_player.play()
+

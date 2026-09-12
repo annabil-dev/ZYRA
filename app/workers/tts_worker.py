@@ -43,6 +43,20 @@ class TTSWorker(QThread):
             await communicate.save(path)
             
             if self.is_running:
+                # Play the audio natively using Windows API
+                import ctypes
+                # Use alias to avoid conflicts with multiple files
+                alias = f"tts_{id(self)}"
+                ctypes.windll.winmm.mciSendStringW(f'open "{path}" type mpegvideo alias {alias}', None, 0, None)
+                ctypes.windll.winmm.mciSendStringW(f'play {alias} wait', None, 0, None)
+                ctypes.windll.winmm.mciSendStringW(f'close {alias}', None, 0, None)
+                
+                # Try to clean up temp file
+                try:
+                    os.remove(path)
+                except:
+                    pass
+                
                 self.audio_ready.emit(path)
         except Exception as e:
             self.error_occurred.emit(str(e))
