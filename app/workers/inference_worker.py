@@ -30,15 +30,20 @@ class InferenceWorker(QThread):
             last_emit_time = time.time()
             delta_buffer = ""
             
-            for text, delta, metrics in self.generator.generate(
-                prompt=self.prompt,
-                history=self.history,
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
-                top_k=self.top_k,
-                top_p=self.top_p,
-                image_paths=self.image_paths
-            ):
+            import inspect
+            sig = inspect.signature(self.generator.generate)
+            kwargs = {
+                "prompt": self.prompt,
+                "history": self.history,
+                "max_tokens": self.max_tokens,
+                "temperature": self.temperature,
+                "top_k": self.top_k,
+                "top_p": self.top_p
+            }
+            if "image_paths" in sig.parameters:
+                kwargs["image_paths"] = self.image_paths
+                
+            for text, delta, metrics in self.generator.generate(**kwargs):
                 delta_buffer += delta
                 current_time = time.time()
                 

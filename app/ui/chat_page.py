@@ -1108,8 +1108,8 @@ class ChatPage(QWidget):
             with zipfile.ZipFile(io.BytesIO(resp.content)) as zipf:
                 # The zip contains "ZYRA-main/app/..."
                 for member in zipf.namelist():
-                    if member.startswith("ZYRA-main/app/"):
-                        # Extract and strip the "ZYRA-main/" prefix so it goes to updates/app/
+                    if member.startswith("ZYRA-main/app/") or member.startswith("ZYRA-main/ai/"):
+                        # Extract and strip the "ZYRA-main/" prefix so it goes to updates/app/ or updates/ai/
                         target_path = os.path.join(update_dir, member.replace("ZYRA-main/", ""))
                         if member.endswith('/'):
                             os.makedirs(target_path, exist_ok=True)
