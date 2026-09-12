@@ -42,10 +42,25 @@ class MainWindow(QMainWindow):
         # Sidebar
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("Sidebar")
-        self.sidebar.setFixedWidth(220)
+        self.sidebar.setFixedWidth(70)
         
-        sidebar_items = ["Dashboard", "Chat", "Dataset", "Training", "Models", "Settings"]
-        self.sidebar.addItems(sidebar_items)
+        sidebar_data = [
+            ("⊞", "Dashboard"),
+            ("▤", "Chat"),
+            ("⛁", "Dataset"),
+            ("📈", "Training"),
+            ("❖", "Models"),
+            ("⚙︎", "Settings")
+        ]
+        
+        from PySide6.QtWidgets import QListWidgetItem
+        from PySide6.QtCore import Qt
+        
+        for icon_text, tooltip in sidebar_data:
+            item = QListWidgetItem(icon_text)
+            item.setTextAlignment(Qt.AlignCenter)
+            item.setToolTip(tooltip)
+            self.sidebar.addItem(item)
         
         # Pages Container
         self.pages = QStackedWidget()

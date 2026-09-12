@@ -90,13 +90,13 @@ class DashboardPage(QWidget):
         vram_gb = str(self.hardware_info.get("vram_gb", "Unknown"))
         
         # Pill 1: OS
-        pill_os = self.create_stat_pill("💻", "Operating System", os_name)
+        pill_os = self.create_stat_pill("⊞", "Operating System", os_name)
         # Pill 2: CPU
-        pill_cpu = self.create_stat_pill("🧠", "Processor", cpu_name)
+        pill_cpu = self.create_stat_pill("❖", "Processor", cpu_name)
         # Pill 3: RAM
-        pill_ram = self.create_stat_pill("⚡", "System Memory", f"{ram_gb} GB RAM")
+        pill_ram = self.create_stat_pill("☷", "System Memory", f"{ram_gb} GB RAM")
         # Pill 4: GPU
-        pill_gpu = self.create_stat_pill("🎮", "Graphics Card", f"{gpu_name} ({vram_gb} GB VRAM)")
+        pill_gpu = self.create_stat_pill("◫", "Graphics Card", f"{gpu_name} ({vram_gb} GB VRAM)")
         
         grid.addWidget(pill_os, 0, 0)
         grid.addWidget(pill_cpu, 0, 1)
