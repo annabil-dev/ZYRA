@@ -352,6 +352,36 @@ class ChatPage(QWidget):
         
         param_group.setLayout(param_layout)
         
+        # System Prompt Group
+        prompt_group = QGroupBox("System Prompt")
+        prompt_layout = QVBoxLayout()
+        from PySide6.QtWidgets import QTextEdit
+        from PySide6.QtCore import QSettings
+        
+        self.settings = QSettings("ZYRA", "ZYRA_AI")
+        default_prompt = ("Kamu adalah asisten AI lokal yang cerdas, ramah, dan membantu. "
+                          "Selalu balas menggunakan bahasa yang sama dengan pengguna. "
+                          "Jika pengguna berbicara bahasa Indonesia, balas dalam bahasa Indonesia. "
+                          "Jika pengguna berbicara bahasa Inggris, balas dalam bahasa Inggris. "
+                          "Berikan jawaban yang jelas, ringkas, dan informatif.")
+        saved_prompt = self.settings.value("system_prompt", default_prompt)
+        
+        self.system_prompt_input = QTextEdit()
+        self.system_prompt_input.setText(saved_prompt)
+        self.system_prompt_input.setMaximumHeight(100)
+        
+        def save_prompt():
+            self.settings.setValue("system_prompt", self.system_prompt_input.toPlainText().strip())
+            Toast(self, "System Prompt Saved!").show()
+            
+        self.save_prompt_btn = QPushButton("Save Prompt")
+        self.save_prompt_btn.clicked.connect(save_prompt)
+        self.save_prompt_btn.setCursor(Qt.PointingHandCursor)
+        
+        prompt_layout.addWidget(self.system_prompt_input)
+        prompt_layout.addWidget(self.save_prompt_btn)
+        prompt_group.setLayout(prompt_layout)
+        
         # System Update Group
         update_group = QGroupBox("System Update")
         update_layout = QVBoxLayout()
@@ -373,6 +403,7 @@ class ChatPage(QWidget):
         settings_layout.addWidget(backend_group)
         settings_layout.addWidget(load_group)
         settings_layout.addWidget(param_group)
+        settings_layout.addWidget(prompt_group)
         settings_layout.addWidget(update_group)
         settings_layout.addStretch()
         
@@ -1113,16 +1144,16 @@ class ChatPage(QWidget):
         import os, sys
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
-        current_version = "v1.0.13" # The base bundled version
+        current_version = "v1.0.55" # The base bundled version
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.13")
+                    current_version = json.load(f).get("version", "v1.0.55")
             except Exception:
                 pass
                 
-        pub_version = v_info.get("version", "v1.0.13")
+        pub_version = v_info.get("version", "v1.0.55")
         
         self.check_update_btn.setText("Check for Updates")
         self.check_update_btn.setEnabled(True)
@@ -1289,13 +1320,13 @@ class ChatPage(QWidget):
                 if resp.status_code == 200:
                     v_info = resp.json()
                     
-                    current_version = "v1.0.13"
+                    current_version = "v1.0.55"
                     current_v_path = os.path.join(user_data_dir, "current_version.json")
                     if os.path.exists(current_v_path):
                         with open(current_v_path, 'r') as f:
-                            current_version = json.load(f).get("version", "v1.0.13")
+                            current_version = json.load(f).get("version", "v1.0.55")
                             
-                    pub_version = v_info.get("version", "v1.0.13")
+                    pub_version = v_info.get("version", "v1.0.55")
                     
                     if self._parse_version(pub_version) > self._parse_version(current_version):
                         signals.new_update.emit(v_info)

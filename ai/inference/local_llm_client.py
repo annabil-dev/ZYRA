@@ -58,14 +58,19 @@ class LocalLLMGenerator:
         
         self.is_interrupted = False
         
+        from PySide6.QtCore import QSettings
+        settings = QSettings("ZYRA", "ZYRA_AI")
+        default_prompt = (
+            "Kamu adalah asisten AI lokal yang cerdas, ramah, dan membantu. "
+            "Selalu balas menggunakan bahasa yang sama dengan pengguna. "
+            "Jika pengguna berbicara bahasa Indonesia, balas dalam bahasa Indonesia. "
+            "Jika pengguna berbicara bahasa Inggris, balas dalam bahasa Inggris. "
+            "Berikan jawaban yang jelas, ringkas, dan informatif."
+        )
+        system_prompt = settings.value("system_prompt", default_prompt)
+        
         messages = [
-            {"role": "system", "content": (
-                "Kamu adalah asisten AI lokal yang cerdas, ramah, dan membantu. "
-                "Selalu balas menggunakan bahasa yang sama dengan pengguna. "
-                "Jika pengguna berbicara bahasa Indonesia, balas dalam bahasa Indonesia. "
-                "Jika pengguna berbicara bahasa Inggris, balas dalam bahasa Inggris. "
-                "Berikan jawaban yang jelas, ringkas, dan informatif."
-            )}
+            {"role": "system", "content": system_prompt}
         ]
         
         if history:

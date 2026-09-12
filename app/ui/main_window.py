@@ -52,12 +52,12 @@ class MainWindow(QMainWindow):
         import json, os
         
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
-        current_version = "v1.0.42"
+        current_version = "v1.0.55"
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.42")
+                    current_version = json.load(f).get("version", "v1.0.55")
             except:
                 pass
                 
@@ -132,7 +132,73 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(sidebar_container)
         main_layout.addWidget(self.pages)
         
+        self.setup_system_tray(icon_path)
+        self.setup_global_hotkey()
         self.setup_hot_reload()
+
+    def setup_system_tray(self, icon_path):
+        from PySide6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
+        from PySide6.QtGui import QIcon
+        
+        self.tray_icon = QSystemTrayIcon(self)
+        self.tray_icon.setIcon(QIcon(icon_path))
+        
+        # Create the context menu
+        tray_menu = QMenu()
+        
+        show_action = tray_menu.addAction("Show ZYRA AI")
+        show_action.triggered.connect(self.show_and_activate)
+        
+        quit_action = tray_menu.addAction("Quit")
+        quit_action.triggered.connect(QApplication.instance().quit)
+        
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.activated.connect(self.on_tray_activated)
+        self.tray_icon.show()
+        
+    def on_tray_activated(self, reason):
+        from PySide6.QtWidgets import QSystemTrayIcon
+        if reason == QSystemTrayIcon.Trigger:
+            self.show_and_activate()
+            
+    def show_and_activate(self):
+        self.show()
+        self.activateWindow()
+        self.raise_()
+        
+    def closeEvent(self, event):
+        from PySide6.QtWidgets import QSystemTrayIcon
+        # Minimize to tray instead of closing, if tray is available
+        if QSystemTrayIcon.isSystemTrayAvailable() and self.tray_icon.isVisible():
+            self.hide()
+            self.tray_icon.showMessage(
+                "ZYRA AI",
+                "Aplikasi berjalan di latar belakang. Klik ikon ini untuk membuka kembali.",
+                QSystemTrayIcon.Information,
+                2000
+            )
+            event.ignore()
+        else:
+            event.accept()
+
+    def setup_global_hotkey(self):
+        from PySide6.QtCore import QThread, Signal
+        import keyboard
+        
+        class HotkeyThread(QThread):
+            hotkey_pressed = Signal()
+            
+            def run(self):
+                # This will run blocking in the thread
+                keyboard.add_hotkey('ctrl+space', self.on_hotkey)
+                keyboard.wait()
+                
+            def on_hotkey(self):
+                self.hotkey_pressed.emit()
+                
+        self.hotkey_thread = HotkeyThread(self)
+        self.hotkey_thread.hotkey_pressed.connect(self.show_and_activate)
+        self.hotkey_thread.start()
 
     def setup_hot_reload(self):
         """Monitors the project directories for code changes and prompts for restart."""
