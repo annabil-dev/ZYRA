@@ -49,7 +49,7 @@ class LocalLLMGenerator:
         self,
         prompt: str,
         history: list = None,
-        max_tokens: int = 256,
+        max_tokens: int = 1024,
         temperature: float = 0.7,
         top_k: int = 40,
         top_p: float = 0.9,
@@ -90,58 +90,139 @@ class LocalLLMGenerator:
                     self.logger.error(f"Failed to encode image {img_path}: {e}")
             messages.append({"role": "user", "content": content_list})
         
+        from app.core.tools import TOOLS_SCHEMA, execute_tool
+        import json
+        
         start_time = time.time()
         generated_text = ""
         token_count = 0
         
-        try:
-            # We MUST stream the response. For a 70B model offloaded to RAM, 
-            # waiting for the entire response would trigger timeouts and degrade UX.
-            response_stream = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                stream=True,
-                temperature=temperature,
-                top_p=top_p,
-                max_tokens=max_tokens,
-                # Extra params for llama.cpp compatible backends
-                extra_body={"top_k": top_k}
-            )
-            
-            for chunk in response_stream:
-                if self.is_interrupted:
-                    self.logger.info("Generation interrupted by user.")
-                    break
+        # Tool execution loop
+        MAX_TOOL_CALLS = 5
+        tool_call_count = 0
+        
+        while tool_call_count < MAX_TOOL_CALLS:
+            if self.is_interrupted:
+                break
+                
+            try:
+                response_stream = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    stream=True,
+                    temperature=temperature,
+                    top_p=top_p,
+                    max_tokens=max_tokens,
+                    tools=TOOLS_SCHEMA,
+                    extra_body={"top_k": top_k}
+                )
+                
+                tool_calls_accumulator = {}
+                is_calling_tool = False
+                
+                for chunk in response_stream:
+                    if self.is_interrupted:
+                        self.logger.info("Generation interrupted by user.")
+                        break
+                        
+                    delta = chunk.choices[0].delta
                     
-                delta_content = chunk.choices[0].delta.content
-                if delta_content:
-                    generated_text += delta_content
-                    token_count += 1
+                    # Accumulate tool calls if present
+                    if getattr(delta, 'tool_calls', None):
+                        is_calling_tool = True
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in tool_calls_accumulator:
+                                tool_calls_accumulator[idx] = {
+                                    "id": tc.id or "",
+                                    "type": "function",
+                                    "function": {"name": tc.function.name or "", "arguments": tc.function.arguments or ""}
+                                }
+                            else:
+                                if tc.id: tool_calls_accumulator[idx]["id"] = tc.id
+                                if tc.function.name: tool_calls_accumulator[idx]["function"]["name"] += tc.function.name
+                                if tc.function.arguments: tool_calls_accumulator[idx]["function"]["arguments"] += tc.function.arguments
+                        continue
                     
-                    dt = max(time.time() - start_time, 0.001)
-                    tok_per_sec = token_count / dt
+                    # Normal text streaming
+                    delta_content = delta.content
+                    if delta_content and not is_calling_tool:
+                        generated_text += delta_content
+                        token_count += 1
+                        
+                        dt = max(time.time() - start_time, 0.001)
+                        tok_per_sec = token_count / dt
+                        
+                        metrics = {
+                            "latency_ms": dt * 1000,
+                            "tokens_per_sec": tok_per_sec,
+                            "vram_mb": 8192.0
+                        }
+                        
+                        yield generated_text, delta_content, metrics
+                        
+                # Handle tool execution if tools were called
+                if is_calling_tool and tool_calls_accumulator:
+                    # Notify UI that a tool is being called
+                    tool_names = [tc["function"]["name"] for tc in tool_calls_accumulator.values()]
+                    ui_notify = f"\n*[Calling tools: {', '.join(tool_names)}]*\n"
+                    generated_text += ui_notify
+                    yield generated_text, ui_notify, {"latency_ms": 0, "tokens_per_sec": 0, "vram_mb": 8192.0}
                     
-                    # VRAM metrics for Ollama are typically opaque at the generation call layer,
-                    # but we cap our assumptions at the 8GB limit we have strictly allocated.
-                    metrics = {
-                        "latency_ms": dt * 1000,
-                        "tokens_per_sec": tok_per_sec,
-                        "vram_mb": 8192.0 # Assume strict 8GB maximization
+                    # Append assistant's tool calls to messages
+                    assistant_message = {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": tc["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": tc["function"]["name"],
+                                    "arguments": tc["function"]["arguments"]
+                                }
+                            }
+                            for tc in tool_calls_accumulator.values()
+                        ]
                     }
+                    messages.append(assistant_message)
                     
-                    # Yield: full_text, delta_text, metrics
-                    yield generated_text, delta_content, metrics
+                    # Execute tools and append results
+                    for tc in tool_calls_accumulator.values():
+                        func_name = tc["function"]["name"]
+                        try:
+                            args = json.loads(tc["function"]["arguments"])
+                        except json.JSONDecodeError:
+                            args = {}
+                            
+                        self.logger.info(f"Executing tool: {func_name} with args: {args}")
+                        result_str = execute_tool(func_name, args)
+                        
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": result_str
+                        })
+                        
+                    tool_call_count += 1
+                    continue # Loop back to API with the new messages
                     
-        except APITimeoutError as e:
-            error_msg = f"Timeout Error: Engine took too long to respond. (TTFT > {self.timeout_settings.read}s)"
-            self.logger.error(error_msg)
-            yield generated_text + f"\n[ERROR: {error_msg}]", f"\n[ERROR: {error_msg}]", {"latency_ms": 0, "tokens_per_sec": 0, "vram_mb": 0}
-            
-        except APIConnectionError as e:
-            error_msg = f"Connection Error: Could not connect to {self.base_url}. Is Ollama/llama.cpp running?"
-            self.logger.error(error_msg)
-            yield f"[ERROR: {error_msg}]", f"[ERROR: {error_msg}]", {"latency_ms": 0, "tokens_per_sec": 0, "vram_mb": 0}
-            
-        except Exception as e:
-            self.logger.error(f"Unexpected inference error: {str(e)}")
-            yield generated_text + f"\n[ERROR: {str(e)}]", f"\n[ERROR: {str(e)}]", {"latency_ms": 0, "tokens_per_sec": 0, "vram_mb": 0}
+                # If no tools were called and stream finished normally, break the loop
+                break
+                    
+            except APITimeoutError as e:
+                error_msg = f"Timeout Error: Engine took too long to respond. (TTFT > {self.timeout_settings.read}s)"
+                self.logger.error(error_msg)
+                yield generated_text + f"\n[ERROR: {error_msg}]", f"\n[ERROR: {error_msg}]", {"latency_ms": 0, "tokens_per_sec": 0, "vram_mb": 0}
+                break
+                
+            except APIConnectionError as e:
+                error_msg = f"Connection Error: Could not connect to {self.base_url}. Is Ollama/llama.cpp running?"
+                self.logger.error(error_msg)
+                yield f"[ERROR: {error_msg}]", f"[ERROR: {error_msg}]", {"latency_ms": 0, "tokens_per_sec": 0, "vram_mb": 0}
+                break
+                
+            except Exception as e:
+                self.logger.error(f"Unexpected inference error: {str(e)}")
+                yield generated_text + f"\n[ERROR: {str(e)}]", f"\n[ERROR: {str(e)}]", {"latency_ms": 0, "tokens_per_sec": 0, "vram_mb": 0}
+                break
