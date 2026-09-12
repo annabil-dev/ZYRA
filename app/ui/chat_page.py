@@ -70,9 +70,9 @@ class ChatPage(QWidget):
         from PySide6.QtCore import QSize
         
         if getattr(sys, 'frozen', False):
-            self.old_assets_dir = os.path.join(sys._MEIPASS, "app", "ui", "assets", "icons")
+            self.assets_dir = os.path.join(sys._MEIPASS, "app", "ui", "assets", "icons")
         else:
-            self.old_assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui", "assets", "icons")
+            self.assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui", "assets", "icons")
             
         self.icon_speaker_on = QIcon(os.path.join(self.assets_dir, "speaker_on.svg"))
         self.icon_speaker_off = QIcon(os.path.join(self.assets_dir, "speaker_off.svg"))
@@ -274,10 +274,7 @@ class ChatPage(QWidget):
         from PySide6.QtGui import QIcon
         from PySide6.QtCore import QSize
         
-        if getattr(sys, 'frozen', False):
-            old_assets_dir = os.path.join(sys._MEIPASS, "app", "ui", "assets", "icons")
-        else:
-            old_assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui", "assets", "icons")
+        # Old assets dir reference removed
             
         self.icon_mic = QIcon(os.path.join(self.assets_dir, "mic.svg"))
         self.icon_mic_rec = QIcon(os.path.join(self.assets_dir, "mic_recording.svg"))
@@ -1301,16 +1298,16 @@ class ChatPage(QWidget):
         import os, sys
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
-        current_version = "v1.0.78" # The base bundled version
+        current_version = "v1.0.79" # The base bundled version
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.78")
+                    current_version = json.load(f).get("version", "v1.0.79")
             except Exception:
                 pass
                 
-        pub_version = v_info.get("version", "v1.0.78")
+        pub_version = v_info.get("version", "v1.0.79")
         
         self.check_update_btn.setText("Check for Updates")
         self.check_update_btn.setEnabled(True)
@@ -1480,13 +1477,13 @@ class ChatPage(QWidget):
                 if resp.status_code == 200:
                     v_info = resp.json()
                     
-                    current_version = "v1.0.78"
+                    current_version = "v1.0.79"
                     current_v_path = os.path.join(user_data_dir, "current_version.json")
                     if os.path.exists(current_v_path):
                         with open(current_v_path, 'r') as f:
-                            current_version = json.load(f).get("version", "v1.0.78")
+                            current_version = json.load(f).get("version", "v1.0.79")
                             
-                    pub_version = v_info.get("version", "v1.0.78")
+                    pub_version = v_info.get("version", "v1.0.79")
                     
                     if self._parse_version(pub_version) > self._parse_version(current_version):
                         signals.new_update.emit(v_info)
