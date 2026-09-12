@@ -1252,15 +1252,23 @@ class ChatPage(QWidget):
         from PySide6.QtCore import QObject, Signal
         
         class UpdateSignals(QObject):
-            new_update = Signal(str)
+            new_update = Signal(dict)
             up_to_date = Signal()
             
         self._update_signals = UpdateSignals()
         signals = self._update_signals
         
-        def on_new_update(pub_version):
+        def on_new_update(v_info):
+            pub_version = v_info.get("version", "")
             self.update_status_lbl.setText(f"🚀 New Update Available (Patch {pub_version})")
             self.update_status_lbl.setStyleSheet("color: #10b981; font-weight: bold;")
+            
+            from PySide6.QtWidgets import QMessageBox
+            reply = QMessageBox.question(self, "Update Available", 
+                                     f"New OTA Update found!\nDesc: {v_info.get('description')}\nNew Version: {pub_version}\n\nUpdate now?",
+                                     QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                self._apply_update(v_info)
             
         def on_up_to_date():
             self.update_status_lbl.setText("App is up to date.")
@@ -1287,7 +1295,7 @@ class ChatPage(QWidget):
                     pub_version = v_info.get("version", "v1.0.13")
                     
                     if self._parse_version(pub_version) > self._parse_version(current_version):
-                        signals.new_update.emit(pub_version)
+                        signals.new_update.emit(v_info)
                     else:
                         signals.up_to_date.emit()
             except Exception:
