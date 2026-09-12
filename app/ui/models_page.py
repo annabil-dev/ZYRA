@@ -9,47 +9,87 @@ from app.ui.model_card import ModelCardWidget
 from app.workers.ollama_installer import OllamaInstallerWorker
 
 CURATED_MODELS = [
+    # RINGAN (Light - Ram 4-8GB)
+    {
+        "name": "Llama 3.2 (1B)",
+        "tag": "llama3.2:1b",
+        "params": "1B",
+        "required_ram": 2,
+        "description": "Model ultra-ringan dari Meta. Sangat cepat, cocok untuk laptop kentang atau tanpa GPU."
+    },
+    {
+        "name": "Qwen 2.5 (1.5B)",
+        "tag": "qwen2.5:1.5b",
+        "params": "1.5B",
+        "required_ram": 2,
+        "description": "Sangat kecil tapi pintar. Direkomendasikan untuk tugas ringan di laptop standar."
+    },
+    {
+        "name": "Llama 3.2 (3B)",
+        "tag": "llama3.2:3b",
+        "params": "3B",
+        "required_ram": 4,
+        "description": "Perpaduan pas antara performa ringan dan kecerdasan menengah. Wajib dicoba."
+    },
+    {
+        "name": "Phi-3 Mini (3.8B)",
+        "tag": "phi3:mini",
+        "params": "3.8B",
+        "required_ram": 4,
+        "description": "Model buatan Microsoft yang sangat mahir dalam logika matematika dan coding dasar."
+    },
+
+    # MENENGAH (Middle - Ram 8-16GB)
     {
         "name": "Llama 3.1 (8B)",
         "tag": "llama3.1:8b",
         "params": "8B",
-        "required_ram": 6,
-        "description": "Meta's highly capable 8B model. Best for general purpose tasks, writing, and chatting. Extremely fast."
+        "required_ram": 8,
+        "description": "Model standar emas dari Meta. Serba bisa untuk menulis, ngobrol, dan tugas umum."
     },
     {
         "name": "Qwen 2.5 (7B)",
         "tag": "qwen2.5:7b",
         "params": "7B",
-        "required_ram": 6,
-        "description": "Alibaba's latest model. Unbelievably smart for its size, especially in mathematics and logic."
+        "required_ram": 8,
+        "description": "Model andalan Alibaba. Salah satu yang paling cerdas untuk coding dan multibahasa."
+    },
+    {
+        "name": "Gemma 2 (9B)",
+        "tag": "gemma2:9b",
+        "params": "9B",
+        "required_ram": 8,
+        "description": "Dikembangkan oleh Google. Sangat kuat untuk penalaran mendalam dan analisis teks."
     },
     {
         "name": "Mistral NeMo (12B)",
         "tag": "mistral-nemo",
         "params": "12B",
-        "required_ram": 8,
-        "description": "NVIDIA & Mistral collaboration. 128k context window. Perfect for document analysis and long chats."
+        "required_ram": 12,
+        "description": "Cocok untuk ngebaca dokumen panjang banget. Butuh memori agak lumayan."
     },
-    {
-        "name": "Phi-3 Medium (14B)",
-        "tag": "phi3:medium",
-        "params": "14B",
-        "required_ram": 10,
-        "description": "Microsoft's flagship reasoning model. Excels at step-by-step logic and academic tasks."
-    },
+
+    # BERAT (Heavy - Ram 16GB+)
     {
         "name": "DeepSeek Coder V2 (16B)",
         "tag": "deepseek-coder-v2",
         "params": "16B",
-        "required_ram": 12,
-        "description": "The absolute best coding assistant model for local machines. Beats many larger models in programming."
+        "required_ram": 16,
+        "description": "Asisten coding terbaik untuk dijalankan secara lokal. Butuh laptop/PC gaming."
     },
     {
         "name": "Qwen 2.5 (32B)",
         "tag": "qwen2.5:32b",
         "params": "32B",
-        "required_ram": 20,
-        "description": "Heavyweight champion. Requires a powerful GPU but provides GPT-4 level intelligence."
+        "required_ram": 24,
+        "description": "Kelas berat. Setara kecerdasan ChatGPT-4. Wajib pakai PC Desktop atau GPU VRAM besar."
+    },
+    {
+        "name": "Command R (35B)",
+        "tag": "command-r",
+        "params": "35B",
+        "required_ram": 24,
+        "description": "Spesialis RAG dan interaksi banyak dokumen sekaligus. Sangat akurat tapi super berat."
     }
 ]
 
