@@ -53,7 +53,8 @@ class LocalLLMGenerator:
         temperature: float = 0.7,
         top_k: int = 40,
         top_p: float = 0.9,
-        image_paths: list = None
+        image_paths: list = None,
+        security_callback: callable = None
     ) -> Generator[Tuple[str, str, Dict[str, Any]], None, None]:
         
         self.is_interrupted = False
@@ -205,7 +206,7 @@ class LocalLLMGenerator:
                             args = {}
                             
                         self.logger.info(f"Executing tool: {func_name} with args: {args}")
-                        result_str = execute_tool(func_name, args)
+                        result_str = execute_tool(func_name, args, security_callback)
                         
                         messages.append({
                             "role": "tool",

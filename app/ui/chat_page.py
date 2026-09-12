@@ -1117,6 +1117,7 @@ class ChatPage(QWidget):
         self.worker.metrics_updated.connect(self.on_metrics_updated)
         self.worker.generation_finished.connect(self.on_generation_finished)
         self.worker.generation_error.connect(self.on_generation_error)
+        self.worker.security_check_requested.connect(self.handle_security_check)
         
         self.worker.start()
 
@@ -1212,16 +1213,16 @@ class ChatPage(QWidget):
         import os, sys
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
-        current_version = "v1.0.64" # The base bundled version
+        current_version = "v1.0.65" # The base bundled version
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.64")
+                    current_version = json.load(f).get("version", "v1.0.65")
             except Exception:
                 pass
                 
-        pub_version = v_info.get("version", "v1.0.64")
+        pub_version = v_info.get("version", "v1.0.65")
         
         self.check_update_btn.setText("Check for Updates")
         self.check_update_btn.setEnabled(True)
@@ -1391,13 +1392,13 @@ class ChatPage(QWidget):
                 if resp.status_code == 200:
                     v_info = resp.json()
                     
-                    current_version = "v1.0.64"
+                    current_version = "v1.0.65"
                     current_v_path = os.path.join(user_data_dir, "current_version.json")
                     if os.path.exists(current_v_path):
                         with open(current_v_path, 'r') as f:
-                            current_version = json.load(f).get("version", "v1.0.64")
+                            current_version = json.load(f).get("version", "v1.0.65")
                             
-                    pub_version = v_info.get("version", "v1.0.64")
+                    pub_version = v_info.get("version", "v1.0.65")
                     
                     if self._parse_version(pub_version) > self._parse_version(current_version):
                         signals.new_update.emit(v_info)
@@ -1426,3 +1427,35 @@ class ChatPage(QWidget):
         self.chat_history_layout.addWidget(ChatBubbleWidget("ai", msg))
         self._scroll_to_bottom()
         self._active_generation_session_id = None
+
+    def handle_security_check(self, tool_name: str, arguments_str: str):
+        """Displays a confirmation dialog for dangerous tools."""
+        from PySide6.QtWidgets import QMessageBox
+        import json
+        
+        args = {}
+        try:
+            args = json.loads(arguments_str)
+        except:
+            pass
+            
+        msg = f"ZYRA AI is trying to use the '{tool_name}' tool.\n\n"
+        if tool_name == "run_command":
+            msg += f"Command:\n{args.get('command', '')}\n\nWorking Directory: {args.get('cwd', 'Default')}"
+        elif tool_name == "write_file_content":
+            msg += f"File:\n{args.get('path', '')}\n\nContent Length: {len(args.get('content', ''))} characters"
+            
+        msg += "\n\nDo you want to ALLOW this action?"
+        
+        reply = QMessageBox.question(
+            self, 
+            "Security Confirmation", 
+            msg,
+            QMessageBox.Yes | QMessageBox.No, 
+            QMessageBox.No
+        )
+        
+        # Resume the worker with the decision
+        allow = (reply == QMessageBox.Yes)
+        if hasattr(self, 'worker') and self.worker:
+            self.worker.set_security_response(allow)
