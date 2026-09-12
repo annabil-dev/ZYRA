@@ -1268,6 +1268,9 @@ class ChatPage(QWidget):
                                      f"New OTA Update found!\nDesc: {v_info.get('description')}\nNew Version: {pub_version}\n\nUpdate now?",
                                      QMessageBox.Yes | QMessageBox.No)
             if reply == QMessageBox.Yes:
+                main_win = self.window()
+                if hasattr(main_win, 'sidebar'):
+                    main_win.sidebar.setCurrentRow(3) # Move to Settings page
                 self._apply_update(v_info)
             
         def on_up_to_date():
