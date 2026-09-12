@@ -1,4 +1,5 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFormLayout, QFrame, QHBoxLayout
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame, 
+                                 QHBoxLayout, QGridLayout)
 from PySide6.QtCore import Qt
 
 class DashboardPage(QWidget):
@@ -7,12 +8,49 @@ class DashboardPage(QWidget):
         self.hardware_info = hardware_info
         self.init_ui()
 
-    def create_row(self, label_text: str, value_text: str) -> QHBoxLayout:
+    def create_stat_pill(self, icon: str, title: str, value: str) -> QFrame:
+        pill = QFrame()
+        pill.setObjectName("StatPill")
+        layout = QHBoxLayout(pill)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(16)
+        
+        icon_lbl = QLabel(icon)
+        icon_lbl.setStyleSheet("font-size: 28px; background: transparent;")
+        icon_lbl.setFixedWidth(36)
+        icon_lbl.setAlignment(Qt.AlignCenter)
+        
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(4)
+        
+        title_lbl = QLabel(title)
+        title_lbl.setObjectName("CardSubtitle")
+        title_lbl.setStyleSheet("margin-bottom: 0px;")
+        
+        val_lbl = QLabel(value)
+        val_lbl.setObjectName("CardTitle")
+        val_lbl.setStyleSheet("margin-bottom: 0px; font-size: 16px;")
+        
+        text_layout.addWidget(title_lbl)
+        text_layout.addWidget(val_lbl)
+        
+        layout.addWidget(icon_lbl)
+        layout.addLayout(text_layout)
+        layout.addStretch()
+        
+        return pill
+
+    def create_row(self, label_text: str, value_text: str, status_color: str = None) -> QHBoxLayout:
         row = QHBoxLayout()
+        row.setContentsMargins(0, 4, 0, 4)
         lbl = QLabel(label_text)
         lbl.setObjectName("LabelKey")
         val = QLabel(value_text)
         val.setObjectName("LabelValue")
+        
+        if status_color:
+            val.setStyleSheet(f"color: {status_color}; font-weight: 700;")
+            
         row.addWidget(lbl)
         row.addWidget(val)
         row.addStretch()
@@ -21,45 +59,92 @@ class DashboardPage(QWidget):
     def init_ui(self):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignTop)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(20)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(32)
 
-        title = QLabel("MY-AI Dashboard")
+        header_layout = QVBoxLayout()
+        header_layout.setSpacing(4)
+        
+        title = QLabel("Dashboard")
         title.setObjectName("Header")
-        layout.addWidget(title)
+        
+        subtitle = QLabel("System overview and AI engine status")
+        subtitle.setObjectName("CardSubtitle")
+        
+        header_layout.addWidget(title)
+        header_layout.addWidget(subtitle)
+        layout.addLayout(header_layout)
 
-        # System Status Group
-        sys_card = QFrame()
-        sys_card.setObjectName("Card")
-        sys_layout = QVBoxLayout(sys_card)
+        # 1. Hardware Grid
+        grid = QGridLayout()
+        grid.setSpacing(20)
         
-        sys_title = QLabel("System Status")
-        sys_title.setObjectName("CardTitle")
-        sys_layout.addWidget(sys_title)
+        os_name = self.hardware_info.get("os", "Unknown")
+        cpu_name = self.hardware_info.get("cpu", "Unknown")
+        # Truncate CPU name if too long
+        if len(cpu_name) > 30:
+            cpu_name = cpu_name[:27] + "..."
+            
+        ram_gb = str(self.hardware_info.get("ram_total_gb", "Unknown"))
+        gpu_name = self.hardware_info.get("gpu", "Unknown")
+        vram_gb = str(self.hardware_info.get("vram_gb", "Unknown"))
         
-        sys_layout.addLayout(self.create_row("OS:", self.hardware_info.get("os", "Unknown")))
-        sys_layout.addLayout(self.create_row("CPU:", self.hardware_info.get("cpu", "Unknown")))
-        sys_layout.addLayout(self.create_row("RAM (GB):", str(self.hardware_info.get("ram_total_gb", "Unknown"))))
-        sys_layout.addLayout(self.create_row("GPU:", self.hardware_info.get("gpu", "Unknown")))
-        sys_layout.addLayout(self.create_row("VRAM (GB):", str(self.hardware_info.get("vram_gb", "Unknown"))))
-        sys_layout.addLayout(self.create_row("CUDA Available:", "Yes" if self.hardware_info.get("cuda_available") else "No"))
-        sys_layout.addLayout(self.create_row("CUDA Version:", self.hardware_info.get("cuda_version", "N/A")))
-        sys_layout.addLayout(self.create_row("PyTorch Version:", self.hardware_info.get("pytorch_version", "N/A")))
+        # Pill 1: OS
+        pill_os = self.create_stat_pill("💻", "Operating System", os_name)
+        # Pill 2: CPU
+        pill_cpu = self.create_stat_pill("🧠", "Processor", cpu_name)
+        # Pill 3: RAM
+        pill_ram = self.create_stat_pill("⚡", "System Memory", f"{ram_gb} GB RAM")
+        # Pill 4: GPU
+        pill_gpu = self.create_stat_pill("🎮", "Graphics Card", f"{gpu_name} ({vram_gb} GB VRAM)")
         
-        layout.addWidget(sys_card)
+        grid.addWidget(pill_os, 0, 0)
+        grid.addWidget(pill_cpu, 0, 1)
+        grid.addWidget(pill_ram, 1, 0)
+        grid.addWidget(pill_gpu, 1, 1)
+        
+        layout.addLayout(grid)
 
-        # Application Status Group
+        # 2. Advanced System Info & Application Status
+        bottom_layout = QHBoxLayout()
+        bottom_layout.setSpacing(20)
+        
+        # App Status Card
         app_card = QFrame()
         app_card.setObjectName("Card")
         app_layout = QVBoxLayout(app_card)
+        app_layout.setSpacing(12)
         
         app_title = QLabel("Application Status")
         app_title.setObjectName("CardTitle")
         app_layout.addWidget(app_title)
         
-        app_layout.addLayout(self.create_row("AI Engine:", "Not initialized"))
-        app_layout.addLayout(self.create_row("Model:", "No model loaded"))
-        app_layout.addLayout(self.create_row("Training:", "Idle"))
+        # We can simulate active/inactive colors here
+        app_layout.addLayout(self.create_row("AI Engine:", "Standby", "#a1a1aa"))
+        app_layout.addLayout(self.create_row("Loaded Model:", "None", "#a1a1aa"))
+        app_layout.addLayout(self.create_row("Background Tasks:", "Idle", "#10b981")) # Emerald
         
-        layout.addWidget(app_card)
+        bottom_layout.addWidget(app_card)
+        
+        # Frameworks Card
+        fw_card = QFrame()
+        fw_card.setObjectName("Card")
+        fw_layout = QVBoxLayout(fw_card)
+        fw_layout.setSpacing(12)
+        
+        fw_title = QLabel("Frameworks")
+        fw_title.setObjectName("CardTitle")
+        fw_layout.addWidget(fw_title)
+        
+        cuda_avail = self.hardware_info.get("cuda_available")
+        cuda_text = "Available" if cuda_avail else "Not Available"
+        cuda_color = "#10b981" if cuda_avail else "#ef4444"
+        
+        fw_layout.addLayout(self.create_row("CUDA Acceleration:", cuda_text, cuda_color))
+        fw_layout.addLayout(self.create_row("CUDA Version:", self.hardware_info.get("cuda_version", "N/A")))
+        fw_layout.addLayout(self.create_row("PyTorch Version:", self.hardware_info.get("pytorch_version", "N/A")))
+        
+        bottom_layout.addWidget(fw_card)
+        
+        layout.addLayout(bottom_layout)
         layout.addStretch()
