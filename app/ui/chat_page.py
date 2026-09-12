@@ -1226,16 +1226,16 @@ class ChatPage(QWidget):
         import os, sys
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
-        current_version = "v1.0.69" # The base bundled version
+        current_version = "v1.0.70" # The base bundled version
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.69")
+                    current_version = json.load(f).get("version", "v1.0.70")
             except Exception:
                 pass
                 
-        pub_version = v_info.get("version", "v1.0.69")
+        pub_version = v_info.get("version", "v1.0.70")
         
         self.check_update_btn.setText("Check for Updates")
         self.check_update_btn.setEnabled(True)
@@ -1405,13 +1405,13 @@ class ChatPage(QWidget):
                 if resp.status_code == 200:
                     v_info = resp.json()
                     
-                    current_version = "v1.0.69"
+                    current_version = "v1.0.70"
                     current_v_path = os.path.join(user_data_dir, "current_version.json")
                     if os.path.exists(current_v_path):
                         with open(current_v_path, 'r') as f:
-                            current_version = json.load(f).get("version", "v1.0.69")
+                            current_version = json.load(f).get("version", "v1.0.70")
                             
-                    pub_version = v_info.get("version", "v1.0.69")
+                    pub_version = v_info.get("version", "v1.0.70")
                     
                     if self._parse_version(pub_version) > self._parse_version(current_version):
                         signals.new_update.emit(v_info)

@@ -182,11 +182,6 @@ class LocalLLMGenerator:
                         
                 # Handle tool execution if tools were called
                 if is_calling_tool and tool_calls_accumulator:
-                    # Notify UI that a tool is being called
-                    tool_names = [tc["function"]["name"] for tc in tool_calls_accumulator.values()]
-                    ui_notify = f"\n*[Calling tools: {', '.join(tool_names)}]*\n"
-                    generated_text += ui_notify
-                    yield generated_text, ui_notify, {"latency_ms": 0, "tokens_per_sec": 0, "vram_mb": 8192.0}
                     
                     # Append assistant's tool calls to messages
                     assistant_message = {
