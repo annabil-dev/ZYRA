@@ -92,6 +92,23 @@ TOOLS_SCHEMA = [
                 "required": ["command"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_memory",
+            "description": "Saves an important factual statement or preference about the user to long-term memory. Use this whenever the user tells you their name, preferences, or important background context.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fact": {
+                        "type": "string",
+                        "description": "The factual statement to remember (e.g. 'User's name is Budi', 'User prefers Python')."
+                    }
+                },
+                "required": ["fact"]
+            }
+        }
     }
 ]
 
@@ -231,6 +248,9 @@ def execute_tool(tool_name: str, arguments: dict, security_callback=None) -> str
             return read_file_content(arguments.get("path", ""))
         elif tool_name == "get_system_info":
             return get_system_info()
+        elif tool_name == "save_memory":
+            from app.core.memory import save_memory
+            return save_memory(arguments.get("fact", ""))
         else:
             return f"Error: Unknown tool '{tool_name}'."
     except Exception as e:

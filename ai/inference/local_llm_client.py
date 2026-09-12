@@ -70,6 +70,15 @@ class LocalLLMGenerator:
         )
         system_prompt = settings.value("system_prompt", default_prompt)
         
+        # INJECT LONG-TERM MEMORY
+        try:
+            from app.core.memory import get_memory_context_string
+            memory_context = get_memory_context_string()
+            if memory_context:
+                system_prompt = f"{system_prompt}\n\n{memory_context}"
+        except Exception as e:
+            self.logger.error(f"Failed to load long-term memory context: {e}")
+            
         messages = [
             {"role": "system", "content": system_prompt}
         ]
