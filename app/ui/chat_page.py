@@ -1049,49 +1049,7 @@ class ChatPage(QWidget):
                     self.logger.error(f"RAG Error: {e}")
                     self.show_toast(f"RAG Error: {e}", type="error", duration=3000)
 
-    def on_mic_pressed(self):
-        """Starts recording when the mic button is pressed."""
-        if not self.voice_assistant:
-            from app.core.voice import VoiceAssistant
-            self.voice_assistant = VoiceAssistant()
-            
-        self.input_field.setPlaceholderText("Merekam suara...")
-        self.input_field.setReadOnly(True)
-        self.voice_assistant.start_recording()
-        
-    def on_mic_released(self):
-        """Stops recording and starts the transcription worker."""
-        if not self.voice_assistant:
-            return
-            
-        self.input_field.setPlaceholderText("Memproses suara...")
-        
-        from app.workers.voice_worker import VoiceWorker
-        self.voice_worker = VoiceWorker(self.voice_assistant, parent=self)
-        self.voice_worker.transcription_complete.connect(self.on_voice_transcribed)
-        self.voice_worker.error_occurred.connect(self.on_voice_error)
-        self.voice_worker.start()
-        
-    def on_voice_transcribed(self, text: str):
-        self.input_field.setPlaceholderText("Message ZYRA...")
-        self.input_field.setReadOnly(False)
-        
-        if text:
-            # Append to existing text with a space, or just set it
-            current = self.input_field.text()
-            if current:
-                self.input_field.setText(f"{current} {text}")
-            else:
-                self.input_field.setText(text)
-                
-            self.input_field.setFocus()
-            
-    def on_voice_error(self, err: str):
-        self.input_field.setPlaceholderText("Message ZYRA...")
-        self.input_field.setReadOnly(False)
-        self.logger.error(f"Voice Error: {err}")
-        self.show_toast("Gagal memproses suara. Pastikan PyTorch ter-install dengan benar.", type="error", duration=3000)
-            
+
             # Clear attachments after sending
             self.attached_files.clear()
             while self.attachments_layout.count():
@@ -1296,16 +1254,16 @@ class ChatPage(QWidget):
         import os, sys
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
-        current_version = "v1.0.72" # The base bundled version
+        current_version = "v1.0.73" # The base bundled version
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.72")
+                    current_version = json.load(f).get("version", "v1.0.73")
             except Exception:
                 pass
                 
-        pub_version = v_info.get("version", "v1.0.72")
+        pub_version = v_info.get("version", "v1.0.73")
         
         self.check_update_btn.setText("Check for Updates")
         self.check_update_btn.setEnabled(True)
@@ -1475,13 +1433,13 @@ class ChatPage(QWidget):
                 if resp.status_code == 200:
                     v_info = resp.json()
                     
-                    current_version = "v1.0.72"
+                    current_version = "v1.0.73"
                     current_v_path = os.path.join(user_data_dir, "current_version.json")
                     if os.path.exists(current_v_path):
                         with open(current_v_path, 'r') as f:
-                            current_version = json.load(f).get("version", "v1.0.72")
+                            current_version = json.load(f).get("version", "v1.0.73")
                             
-                    pub_version = v_info.get("version", "v1.0.72")
+                    pub_version = v_info.get("version", "v1.0.73")
                     
                     if self._parse_version(pub_version) > self._parse_version(current_version):
                         signals.new_update.emit(v_info)
@@ -1510,6 +1468,49 @@ class ChatPage(QWidget):
         self.chat_history_layout.addWidget(ChatBubbleWidget("ai", msg))
         self._scroll_to_bottom()
         self._active_generation_session_id = None
+
+    def on_mic_pressed(self):
+        """Starts recording when the mic button is pressed."""
+        if not self.voice_assistant:
+            from app.core.voice import VoiceAssistant
+            self.voice_assistant = VoiceAssistant()
+            
+        self.input_field.setPlaceholderText("Merekam suara...")
+        self.input_field.setReadOnly(True)
+        self.voice_assistant.start_recording()
+        
+    def on_mic_released(self):
+        """Stops recording and starts the transcription worker."""
+        if not self.voice_assistant:
+            return
+            
+        self.input_field.setPlaceholderText("Memproses suara...")
+        
+        from app.workers.voice_worker import VoiceWorker
+        self.voice_worker = VoiceWorker(self.voice_assistant, parent=self)
+        self.voice_worker.transcription_complete.connect(self.on_voice_transcribed)
+        self.voice_worker.error_occurred.connect(self.on_voice_error)
+        self.voice_worker.start()
+        
+    def on_voice_transcribed(self, text: str):
+        self.input_field.setPlaceholderText("Message ZYRA...")
+        self.input_field.setReadOnly(False)
+        
+        if text:
+            # Append to existing text with a space, or just set it
+            current = self.input_field.text()
+            if current:
+                self.input_field.setText(f"{current} {text}")
+            else:
+                self.input_field.setText(text)
+                
+            self.input_field.setFocus()
+            
+    def on_voice_error(self, err: str):
+        self.input_field.setPlaceholderText("Message ZYRA...")
+        self.input_field.setReadOnly(False)
+        self.logger.error(f"Voice Error: {err}")
+        self.show_toast("Gagal memproses suara. Pastikan PyTorch ter-install dengan benar.", type="error", duration=3000)
 
     def handle_security_check(self, tool_name: str, arguments_str: str):
         """Displays a confirmation dialog for dangerous tools."""
