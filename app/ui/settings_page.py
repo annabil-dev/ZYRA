@@ -16,8 +16,7 @@ class SettingsPage(QWidget):
         header.setStyleSheet("font-size: 28px; font-weight: bold; color: white; margin-bottom: 20px;")
         layout.addWidget(header)
         
-        # Take the settings widget from chat_page and widen it
-        self.chat_page.settings_widget.setFixedWidth(400)
+        # Take the settings widget from chat_page
         layout.addWidget(self.chat_page.settings_widget)
         
         layout.addStretch()

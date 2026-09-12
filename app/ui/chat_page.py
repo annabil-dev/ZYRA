@@ -295,9 +295,10 @@ class ChatPage(QWidget):
         
         # --- Settings Area (Exposed for SettingsPage) ---
         self.settings_widget = QWidget()
-        self.settings_widget.setFixedWidth(280)
-        settings_layout = QVBoxLayout(self.settings_widget)
+        settings_layout = QGridLayout(self.settings_widget)
         settings_layout.setContentsMargins(0, 0, 0, 0)
+        settings_layout.setHorizontalSpacing(20)
+        settings_layout.setVerticalSpacing(20)
         
         # --- Backend Selector ---
         backend_group = QGroupBox("Inference Backend")
@@ -400,12 +401,16 @@ class ChatPage(QWidget):
         update_layout.addWidget(self.check_update_btn)
         update_group.setLayout(update_layout)
         
-        settings_layout.addWidget(backend_group)
-        settings_layout.addWidget(load_group)
-        settings_layout.addWidget(param_group)
-        settings_layout.addWidget(prompt_group)
-        settings_layout.addWidget(update_group)
-        settings_layout.addStretch()
+        # Left Column
+        settings_layout.addWidget(backend_group, 0, 0)
+        settings_layout.addWidget(load_group, 1, 0)
+        settings_layout.addWidget(param_group, 2, 0)
+        
+        # Right Column
+        settings_layout.addWidget(prompt_group, 0, 1, 2, 1) # spans row 0 and 1
+        settings_layout.addWidget(update_group, 2, 1)
+        
+        settings_layout.setRowStretch(3, 1) # Push everything up
         
         # Adjust initial splitter sizes
         splitter.setSizes([240, 800])
@@ -1144,16 +1149,16 @@ class ChatPage(QWidget):
         import os, sys
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
             
-        current_version = "v1.0.58" # The base bundled version
+        current_version = "v1.0.59" # The base bundled version
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.58")
+                    current_version = json.load(f).get("version", "v1.0.59")
             except Exception:
                 pass
                 
-        pub_version = v_info.get("version", "v1.0.58")
+        pub_version = v_info.get("version", "v1.0.59")
         
         self.check_update_btn.setText("Check for Updates")
         self.check_update_btn.setEnabled(True)
@@ -1320,13 +1325,13 @@ class ChatPage(QWidget):
                 if resp.status_code == 200:
                     v_info = resp.json()
                     
-                    current_version = "v1.0.58"
+                    current_version = "v1.0.59"
                     current_v_path = os.path.join(user_data_dir, "current_version.json")
                     if os.path.exists(current_v_path):
                         with open(current_v_path, 'r') as f:
-                            current_version = json.load(f).get("version", "v1.0.58")
+                            current_version = json.load(f).get("version", "v1.0.59")
                             
-                    pub_version = v_info.get("version", "v1.0.58")
+                    pub_version = v_info.get("version", "v1.0.59")
                     
                     if self._parse_version(pub_version) > self._parse_version(current_version):
                         signals.new_update.emit(v_info)
