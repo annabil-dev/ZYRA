@@ -15,10 +15,27 @@ class DashboardPage(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(16)
         
-        icon_lbl = QLabel(icon)
-        icon_lbl.setStyleSheet("font-size: 28px; background: transparent;")
+        icon_lbl = QLabel()
+        icon_lbl.setStyleSheet("background: transparent;")
         icon_lbl.setFixedWidth(36)
         icon_lbl.setAlignment(Qt.AlignCenter)
+        
+        import os, sys
+        from PySide6.QtGui import QIcon, QPixmap
+        
+        if getattr(sys, 'frozen', False):
+            assets_dir = os.path.join(sys._MEIPASS, "app", "ui", "assets", "icons")
+        else:
+            assets_dir = os.path.join(os.path.dirname(__file__), "assets", "icons")
+            
+        icon_path = os.path.join(assets_dir, icon)
+        
+        # Load SVG
+        if os.path.exists(icon_path):
+            pixmap = QIcon(icon_path).pixmap(28, 28)
+            icon_lbl.setPixmap(pixmap)
+        else:
+            icon_lbl.setText("?")
         
         text_layout = QVBoxLayout()
         text_layout.setSpacing(4)
@@ -90,13 +107,13 @@ class DashboardPage(QWidget):
         vram_gb = str(self.hardware_info.get("vram_gb", "Unknown"))
         
         # Pill 1: OS
-        pill_os = self.create_stat_pill("⊞", "Operating System", os_name)
+        pill_os = self.create_stat_pill("monitor.svg", "Operating System", os_name)
         # Pill 2: CPU
-        pill_cpu = self.create_stat_pill("❖", "Processor", cpu_name)
+        pill_cpu = self.create_stat_pill("cpu.svg", "Processor", cpu_name)
         # Pill 3: RAM
-        pill_ram = self.create_stat_pill("☷", "System Memory", f"{ram_gb} GB RAM")
+        pill_ram = self.create_stat_pill("memory.svg", "System Memory", f"{ram_gb} GB RAM")
         # Pill 4: GPU
-        pill_gpu = self.create_stat_pill("◫", "Graphics Card", f"{gpu_name} ({vram_gb} GB VRAM)")
+        pill_gpu = self.create_stat_pill("gpu.svg", "Graphics Card", f"{gpu_name} ({vram_gb} GB VRAM)")
         
         grid.addWidget(pill_os, 0, 0)
         grid.addWidget(pill_cpu, 0, 1)

@@ -45,19 +45,40 @@ class MainWindow(QMainWindow):
         self.sidebar.setFixedWidth(70)
         
         sidebar_data = [
-            ("⊞", "Dashboard"),
-            ("▤", "Chat"),
-            ("⛁", "Dataset"),
-            ("📈", "Training"),
-            ("❖", "Models"),
-            ("⚙︎", "Settings")
+            ("dashboard.svg", "Dashboard"),
+            ("chat.svg", "Chat"),
+            ("dataset.svg", "Dataset"),
+            ("training.svg", "Training"),
+            ("models.svg", "Models"),
+            ("settings.svg", "Settings")
         ]
         
         from PySide6.QtWidgets import QListWidgetItem
-        from PySide6.QtCore import Qt
+        from PySide6.QtCore import Qt, QSize
+        from PySide6.QtGui import QIcon
+        import os
+        import sys
         
-        for icon_text, tooltip in sidebar_data:
-            item = QListWidgetItem(icon_text)
+        # Resolve assets dir
+        if getattr(sys, 'frozen', False):
+            assets_dir = os.path.join(sys._MEIPASS, "app", "ui", "assets", "icons")
+        else:
+            assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "ui", "assets", "icons")
+            
+        # Fallback if path manipulation above fails in dev mode
+        if not os.path.exists(assets_dir):
+            assets_dir = os.path.join(os.path.dirname(__file__), "assets", "icons")
+        
+        self.sidebar.setIconSize(QSize(28, 28))
+        
+        for icon_file, tooltip in sidebar_data:
+            item = QListWidgetItem()
+            icon_path = os.path.join(assets_dir, icon_file)
+            if os.path.exists(icon_path):
+                item.setIcon(QIcon(icon_path))
+            else:
+                item.setText("?") # Fallback if SVG missing
+                
             item.setTextAlignment(Qt.AlignCenter)
             item.setToolTip(tooltip)
             self.sidebar.addItem(item)

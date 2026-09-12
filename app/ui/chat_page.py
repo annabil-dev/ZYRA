@@ -164,6 +164,30 @@ class ChatPage(QWidget):
         self.refresh_model_btn.clicked.connect(lambda: self._auto_detect_and_connect(quiet=True))
         model_layout.addWidget(self.refresh_model_btn)
         
+        # Web Search Toggle
+        from PySide6.QtWidgets import QCheckBox
+        self.web_search_toggle = QCheckBox("🌐 Web Search")
+        self.web_search_toggle.setStyleSheet("""
+            QCheckBox {
+                color: #a1a1aa;
+                font-size: 13px;
+                font-weight: bold;
+                margin-left: 10px;
+            }
+            QCheckBox::indicator {
+                width: 14px;
+                height: 14px;
+                border-radius: 3px;
+                border: 1px solid #3f3f46;
+                background: #18181b;
+            }
+            QCheckBox::indicator:checked {
+                background: #2563eb;
+                border: 1px solid #2563eb;
+            }
+        """)
+        model_layout.addWidget(self.web_search_toggle)
+        
         model_layout.addStretch()
         input_layout.addLayout(model_layout)
         
@@ -903,6 +927,16 @@ class ChatPage(QWidget):
                     
         # Append context to prompt implicitly (user doesn't see the huge text in bubble)
         full_prompt = display_prompt + attachment_context
+        
+        # Add Web Search Context if toggled
+        if hasattr(self, 'web_search_toggle') and self.web_search_toggle.isChecked():
+            from app.utils.web_search import search_web
+            self.show_toast("Searching the web...", type="info", duration=2000)
+            from PySide6.QtWidgets import QApplication
+            QApplication.processEvents() # Force UI update to show toast
+            
+            web_context = search_web(prompt, max_results=3)
+            full_prompt += f"\n\n--- WEB SEARCH RESULTS ---\n{web_context}\n--------------------------\nPlease answer the user's question using the context above if it is relevant."
             
         if not self.generator:
             QMessageBox.warning(self, "No Backend", "Please connect to an AI model first.")
