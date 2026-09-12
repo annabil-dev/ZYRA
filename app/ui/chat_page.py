@@ -540,7 +540,8 @@ class ChatPage(QWidget):
             success = Signal(list)
             error = Signal()
             
-        signals = WorkerSignals()
+        self._detect_signals = WorkerSignals()
+        signals = self._detect_signals
         
         def on_bad_status():
             self.status_lbl.setText("Status: Ollama not responding")
@@ -652,7 +653,8 @@ class ChatPage(QWidget):
                 fail = Signal()
                 always = Signal()
                 
-            signals = HealthSignals()
+            self._health_signals = HealthSignals()
+            signals = self._health_signals
             
             def on_success():
                 self.status_lbl.setText(f"Status: Connected — {display_name}")
@@ -1135,7 +1137,8 @@ class ChatPage(QWidget):
             new_update = Signal(str)
             up_to_date = Signal()
             
-        signals = UpdateSignals()
+        self._update_signals = UpdateSignals()
+        signals = self._update_signals
         
         def on_new_update(pub_version):
             self.update_status_lbl.setText(f"🚀 New Update Available (Patch {pub_version})")
