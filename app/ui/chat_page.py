@@ -542,7 +542,10 @@ class ChatPage(QWidget):
                 resp = httpx.get("http://localhost:11434/api/tags", timeout=0.5)
                 if resp.status_code != 200:
                     if not quiet:
-                        QTimer.singleShot(0, lambda: self.status_lbl.setText("Status: Ollama not responding"))
+                        def bad_status():
+                            self.status_lbl.setText("Status: Ollama not responding")
+                            self.ollama_model_combo.setItemText(0, "Ollama not responding")
+                        QTimer.singleShot(0, bad_status)
                     return
                 
                 data = resp.json()
@@ -567,6 +570,7 @@ class ChatPage(QWidget):
                     if not quiet:
                         def no_models():
                             self.status_lbl.setText("Status: No Ollama models found")
+                            self.ollama_model_combo.setItemText(0, "No models found")
                             self.show_toast("No models installed in Ollama. Pull a model first: ollama pull qwen2.5:32b", type="warning", duration=8000)
                         QTimer.singleShot(0, no_models)
                     return
@@ -595,6 +599,7 @@ class ChatPage(QWidget):
                 def on_error():
                     if not quiet:
                         self.status_lbl.setText("Status: Ollama offline. Retrying...")
+                        self.ollama_model_combo.setItemText(0, "Ollama offline...")
                         if not hasattr(self, '_ollama_offline_warned'):
                             self.show_toast("Could not reach Ollama engine. Auto-retrying in the background...", type="warning")
                             self._ollama_offline_warned = True
