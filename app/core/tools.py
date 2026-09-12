@@ -109,6 +109,23 @@ TOOLS_SCHEMA = [
                 "required": ["fact"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_python_script",
+            "description": "Writes and executes a python script to accomplish complex tasks, data analysis, or control the user's computer via pyautogui. Requires user confirmation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "script": {
+                        "type": "string",
+                        "description": "The complete, executable python code. You can use libraries like pyautogui to control the mouse/keyboard, or matplotlib to generate graphs."
+                    }
+                },
+                "required": ["script"]
+            }
+        }
     }
 ]
 
@@ -223,11 +240,57 @@ def run_command(command: str, cwd: str = None) -> str:
     except Exception as e:
         return f"Error executing command: {str(e)}"
 
+def execute_python_script(script: str) -> str:
+    """Executes a python script securely by saving to a temp file and running it."""
+    try:
+        import tempfile
+        import sys
+        
+        # Save script to a temporary file
+        fd, path = tempfile.mkstemp(suffix=".py", prefix="zyra_script_")
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(script)
+            
+        # Determine python executable
+        python_exe = sys.executable if not getattr(sys, 'frozen', False) else "python"
+        
+        # Run command with a timeout of 60 seconds
+        result = subprocess.run(
+            [python_exe, path], 
+            capture_output=True, 
+            text=True,
+            timeout=60
+        )
+        
+        output = f"Script exited with code {result.returncode}.\n"
+        if result.stdout:
+            out_str = result.stdout
+            if len(out_str) > 4000:
+                out_str = out_str[:4000] + "\n...[STDOUT TRUNCATED]..."
+            output += f"STDOUT:\n{out_str}\n"
+        if result.stderr:
+            err_str = result.stderr
+            if len(err_str) > 4000:
+                err_str = err_str[:4000] + "\n...[STDERR TRUNCATED]..."
+            output += f"STDERR:\n{err_str}\n"
+            
+        # Cleanup
+        try:
+            os.remove(path)
+        except:
+            pass
+            
+        return output.strip()
+    except subprocess.TimeoutExpired:
+        return f"Error: Python script timed out after 60 seconds."
+    except Exception as e:
+        return f"Error executing python script: {str(e)}"
+
 def execute_tool(tool_name: str, arguments: dict, security_callback=None) -> str:
     """Dispatcher to safely execute a tool and return the string response."""
     try:
         # DANGEROUS TOOLS - require security clearance
-        if tool_name in ["write_file_content", "run_command"]:
+        if tool_name in ["write_file_content", "run_command", "execute_python_script"]:
             if security_callback:
                 allowed = security_callback(tool_name, arguments)
                 if not allowed:
@@ -240,6 +303,8 @@ def execute_tool(tool_name: str, arguments: dict, security_callback=None) -> str
                 return write_file_content(arguments.get("path", ""), arguments.get("content", ""))
             elif tool_name == "run_command":
                 return run_command(arguments.get("command", ""), arguments.get("cwd", None))
+            elif tool_name == "execute_python_script":
+                return execute_python_script(arguments.get("script", ""))
                 
         # SAFE TOOLS
         elif tool_name == "list_directory":

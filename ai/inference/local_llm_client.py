@@ -85,6 +85,19 @@ class LocalLLMGenerator:
         except Exception as e:
             self.logger.error(f"Failed to load long-term memory context: {e}")
             
+        # INJECT AGI INSTRUCTIONS
+        agi_instructions = (
+            "[AGI CAPABILITIES]\n"
+            "Kamu adalah Autonomous Agent. Kamu memiliki akses ke tool `execute_python_script` untuk mengontrol komputer pengguna secara nyata.\n"
+            "Jika pengguna memintamu untuk:\n"
+            "- Membuka aplikasi\n"
+            "- Mengetik sesuatu atau menggerakkan mouse\n"
+            "- Membuat grafik atau perhitungan kompleks\n"
+            "JANGAN HANYA MENAMPILKAN KODENYA DI CHAT. Gunakan tool `execute_python_script` untuk MENJALANKAN kodenya di latar belakang!\n"
+            "Contoh untuk buka Chrome: import pyautogui, time; pyautogui.press('win'); time.sleep(1); pyautogui.write('chrome'); pyautogui.press('enter')."
+        )
+        system_prompt = f"{system_prompt}\n\n{agi_instructions}"
+            
         messages = [
             {"role": "system", "content": system_prompt}
         ]

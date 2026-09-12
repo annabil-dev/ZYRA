@@ -52,12 +52,12 @@ class MainWindow(QMainWindow):
         import json, os
         
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
-        current_version = "v1.0.73"
+        current_version = "v1.0.74"
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.73")
+                    current_version = json.load(f).get("version", "v1.0.74")
             except:
                 pass
                 
