@@ -70,6 +70,10 @@ class MainWindow(QMainWindow):
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("Sidebar")
         self.sidebar.setStyleSheet("border: none; background-color: transparent;")
+        self.sidebar.setViewMode(QListWidget.IconMode)
+        self.sidebar.setMovement(QListWidget.Static)
+        self.sidebar.setFlow(QListWidget.TopToBottom)
+        self.sidebar.setSpacing(0)
         
         sidebar_data = [
             ("dashboard.svg", "Dashboard"),

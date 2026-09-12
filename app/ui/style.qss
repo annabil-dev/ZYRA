@@ -30,9 +30,8 @@ QListWidget#Sidebar {
 }
 
 QListWidget#Sidebar::item {
-    padding: 8px 0px;
     border-radius: 12px;
-    margin: 8px 12px;
+    margin: 4px 10px;
     color: #a1a1aa; /* Zinc 400 */
     font-weight: 500;
 }
