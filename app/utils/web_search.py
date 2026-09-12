@@ -1,15 +1,14 @@
 import sys
 import os
 
-# Ensure bundled libs are available
+libs_dir_local = os.path.join(os.path.dirname(os.path.dirname(__file__)), "libs")
+if os.path.exists(libs_dir_local) and libs_dir_local not in sys.path:
+    sys.path.insert(0, libs_dir_local)
+
 if getattr(sys, 'frozen', False):
-    libs_dir = os.path.join(sys._MEIPASS, "app", "libs")
-    if libs_dir not in sys.path:
-        sys.path.insert(0, libs_dir)
-else:
-    libs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "libs")
-    if libs_dir not in sys.path:
-        sys.path.insert(0, libs_dir)
+    libs_dir_bundled = os.path.join(sys._MEIPASS, "app", "libs")
+    if libs_dir_bundled not in sys.path:
+        sys.path.insert(1, libs_dir_bundled)
 
 try:
     from duckduckgo_search import DDGS

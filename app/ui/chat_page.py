@@ -1195,14 +1195,31 @@ class ChatPage(QWidget):
                 resp = requests.get("https://github.com/annabil-dev/ZYRA/archive/refs/heads/main.zip", stream=True, timeout=30, headers=headers)
                 resp.raise_for_status()
                 
+                total_size = int(resp.headers.get('content-length', 0))
+                downloaded = 0
+                zip_data = io.BytesIO()
+                
+                for chunk in resp.iter_content(chunk_size=16384):
+                    if chunk:
+                        zip_data.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            pct = int((downloaded / total_size) * 50)
+                            signals.progress.emit(f"Downloading... {downloaded//1024} KB", pct)
+                        else:
+                            signals.progress.emit(f"Downloading... {downloaded//1024} KB", -1)
+                
                 signals.progress.emit("Extracting update...", 50)
+                zip_data.seek(0)
                 
                 user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
                 update_dir = os.path.join(user_data_dir, "updates")
                 os.makedirs(update_dir, exist_ok=True)
                 
-                with zipfile.ZipFile(io.BytesIO(resp.content)) as zipf:
-                    for member in zipf.namelist():
+                with zipfile.ZipFile(zip_data) as zipf:
+                    members = zipf.namelist()
+                    total_members = len(members)
+                    for i, member in enumerate(members):
                         if member.startswith("ZYRA-main/app/") or member.startswith("ZYRA-main/ai/"):
                             target_path = os.path.join(update_dir, member.replace("ZYRA-main/", ""))
                             if member.endswith('/'):
@@ -1211,11 +1228,15 @@ class ChatPage(QWidget):
                                 os.makedirs(os.path.dirname(target_path), exist_ok=True)
                                 with zipf.open(member) as source, open(target_path, "wb") as target:
                                     shutil.copyfileobj(source, target)
+                        
+                        if i % 10 == 0:
+                            pct = 50 + int((i / total_members) * 40)
+                            signals.progress.emit(f"Extracting... {i}/{total_members}", pct)
                                     
                 with open(os.path.join(user_data_dir, "current_version.json"), "w") as f:
                     json.dump(v_info, f)
                     
-                signals.progress.emit("Finalizing...", 90)
+                signals.progress.emit("Finalizing...", 95)
                 time.sleep(0.5)
                 signals.finished.emit()
             except Exception as e:
