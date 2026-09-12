@@ -17,7 +17,7 @@ class MainWindow(QMainWindow):
         self.db_manager = db_manager
         
         self.setWindowTitle("ZYRA")
-        self.resize(1200, 800)
+        self.resize(1024, 720)
         
         # Set Window Icon
         if getattr(sys, 'frozen', False):
@@ -52,12 +52,12 @@ class MainWindow(QMainWindow):
         import json, os
         
         user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
-        current_version = "v1.0.55"
+        current_version = "v1.0.56"
         current_v_path = os.path.join(user_data_dir, "current_version.json")
         if os.path.exists(current_v_path):
             try:
                 with open(current_v_path, 'r') as f:
-                    current_version = json.load(f).get("version", "v1.0.55")
+                    current_version = json.load(f).get("version", "v1.0.56")
             except:
                 pass
                 
