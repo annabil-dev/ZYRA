@@ -127,6 +127,16 @@ def main():
     
     print(f"Connected to Wallet: \033[96m{wallet.address}\033[0m")
     
+    from zyra_cmd.installer import check_and_install_ollama, check_and_pull_model
+    
+    # Auto-Install Ollama Engine if missing
+    check_and_install_ollama()
+    
+    # Check and pull model if needed
+    final_model = check_and_pull_model(args.model)
+    if final_model:
+        args.model = final_model
+    
     try:
         llm = LocalLLMGenerator(model_name=args.model)
     except Exception as e:
