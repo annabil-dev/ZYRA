@@ -85,24 +85,20 @@ def main():
     # --- PoUW MINING LOGIC ---
     print("\033[93m[PoUW Validator]\033[0m Submitting Proof of Useful Work...")
     
-    difficulty = 2 if is_tool_call else 1
-    
     proof = PoUWValidator.generate_proof(
-        wallet_address=wallet.address,
-        task_type="CLI_TEXT_GEN",
-        compute_time_ms=latency_ms,
-        tokens_generated=total_tokens,
-        model_name=args.model,
-        difficulty=difficulty,
-        energy_joules=latency_ms * 0.05
+        task_type="AGENT_EXECUTION" if is_tool_call else "TEXT_GEN",
+        prompt=args.prompt,
+        tokens=total_tokens,
+        metrics={"latency_ms": latency_ms, "vram_mb": 0.0},
+        wallet_address=wallet.address
     )
     
-    if PoUWValidator.verify_proof(proof):
-        reward = proof['reward_zyra']
-        ledger.add_transaction(wallet.address, reward, "MINT", proof['proof_hash'])
+    reward = proof.get('reward', 0.0)
+    if reward > 0:
+        ledger.add_pouw_reward(wallet.address, reward, proof)
         print(f"\033[92m[SUCCESS]\033[0m You earned \033[1m+{reward:.4f} ZYRA\033[0m for this terminal task!")
     else:
-        print("\033[91m[REJECTED]\033[0m Invalid PoUW signature.")
+        print("\033[91m[REJECTED]\033[0m Task did not qualify for PoUW rewards.")
         
 if __name__ == "__main__":
     main()
