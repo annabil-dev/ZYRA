@@ -6,6 +6,8 @@ numpy>=1.24.0
 httpx
 openai
 pyautogui
+duckduckgo-search
+web3>=6.0.0
 
 [dev]
 pytest

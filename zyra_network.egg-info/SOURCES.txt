@@ -293,6 +293,7 @@ tests/test_transformer_overfit.py
 tests/test_weight_tying.py
 zyra_cmd/__init__.py
 zyra_cmd/installer.py
+zyra_cmd/web3_bridge.py
 zyra_cmd/zyra_cli.py
 zyra_network.egg-info/PKG-INFO
 zyra_network.egg-info/SOURCES.txt

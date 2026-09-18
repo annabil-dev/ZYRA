@@ -3,6 +3,8 @@ import sys
 import time
 import json
 import argparse
+import subprocess
+import re
 from pathlib import Path
 
 # Add project root to sys.path
@@ -112,6 +114,107 @@ def process_prompt(llm, prompt, history, wallet, ledger, model_name):
         print("\033[91m[REJECTED]\033[0m Task did not qualify for PoUW rewards.\n")
 
 
+def run_automode(llm, initial_task: str, history: list, wallet: ZyraWallet, ledger: ZyraLedger, model_name: str):
+    print(f"\n\033[95m[Auto-Mode]\033[0m Initializing Autonomous Agent...")
+    print(f"\033[95m[Auto-Mode]\033[0m Task: \033[96m{initial_task}\033[0m\n")
+    
+    sys_prompt = f"""You are an autonomous coding agent running on the user's terminal.
+Your task is: {initial_task}
+You can execute bash/terminal commands to accomplish this task.
+To execute a command, output it exactly like this:
+<CMD>your command here</CMD>
+The system will run the command and feed you the terminal output.
+You must wait for the output before proceeding.
+If you need to write code, use `<CMD>echo "code" > file.py</CMD>` or equivalent terminal commands.
+Once the task is 100% complete and verified, output exactly:
+<DONE>
+"""
+    history.append({"role": "user", "content": sys_prompt})
+    
+    max_iterations = 15
+    for i in range(max_iterations):
+        print(f"\033[90m--- Iteration {i+1}/{max_iterations} ---\033[0m")
+        print("\033[96mZYRA is thinking...\033[0m")
+        
+        is_thinking = True
+        def spinner():
+            symbols = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+            idx = 0
+            while is_thinking:
+                sys.stdout.write(f"\r\033[96m{symbols[idx]}\033[0m Thinking...")
+                sys.stdout.flush()
+                idx = (idx + 1) % len(symbols)
+                time.sleep(0.1)
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
+            
+        spinner_thread = threading.Thread(target=spinner)
+        spinner_thread.daemon = True
+        spinner_thread.start()
+        
+        final_text = ""
+        try:
+            for text, delta, metrics in llm.generate(
+                prompt="",
+                history=history,
+                max_tokens=4096,
+                temperature=0.4,
+                top_k=40,
+                top_p=0.9
+            ):
+                if is_thinking:
+                    is_thinking = False
+                    spinner_thread.join()
+                
+                sys.stdout.write(f"\033[37m{delta}\033[0m")
+                sys.stdout.flush()
+                final_text = text
+            print("\n")
+        except Exception as e:
+            if is_thinking:
+                is_thinking = False
+                spinner_thread.join()
+            print(f"\n\033[91m[ERROR]\033[0m {str(e)}")
+            break
+            
+        history.append({"role": "assistant", "content": final_text})
+        
+        if "<DONE>" in final_text:
+            print(f"\033[92m[Auto-Mode]\033[0m Task completed successfully!\n")
+            break
+            
+        cmd_match = re.search(r"<CMD>(.*?)</CMD>", final_text, re.DOTALL)
+        if cmd_match:
+            command = cmd_match.group(1).strip()
+            print(f"\n\033[93m[Agent Action]\033[0m Executing: \033[96m{command}\033[0m")
+            try:
+                result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60)
+                stdout = result.stdout.strip()
+                stderr = result.stderr.strip()
+                
+                output_msg = ""
+                if stdout:
+                    output_msg += f"STDOUT:\n{stdout}\n"
+                if stderr:
+                    output_msg += f"STDERR:\n{stderr}\n"
+                if not stdout and not stderr:
+                    output_msg = "Command executed successfully with no output."
+                    
+                print(f"\033[90m{output_msg[:500]}{'...' if len(output_msg) > 500 else ''}\033[0m\n")
+                history.append({"role": "user", "content": f"Command output:\n{output_msg}"})
+            except subprocess.TimeoutExpired:
+                print(f"\033[91m[Agent Error]\033[0m Command timed out.\n")
+                history.append({"role": "user", "content": f"Command execution timed out after 60 seconds."})
+            except Exception as e:
+                print(f"\033[91m[Agent Error]\033[0m {str(e)}\n")
+                history.append({"role": "user", "content": f"Command execution failed: {str(e)}"})
+        else:
+            history.append({"role": "user", "content": "Please continue. Use <CMD> to execute a command, or <DONE> if finished."})
+            
+    else:
+        print(f"\033[93m[Auto-Mode]\033[0m Reached maximum iterations ({max_iterations}). Stopping.\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description="ZYRA Developer CLI - Agentic AI + PoUW Mining")
     parser.add_argument("prompt", type=str, nargs='?', help="The prompt or task for ZYRA AI (Optional)")
@@ -188,6 +291,7 @@ def main():
                     print("  \033[93m/sys\033[0m     - Monitor hardware (CPU & RAM usage)")
                     print("  \033[93m/read\033[0m    - Read a local file (e.g., /read script.py)")
                     print("  \033[93m/search\033[0m  - Live web search (e.g., /search latest news)")
+                    print("  \033[93m/automode\033[0m- Autonomous Coding Agent (e.g., /automode create a react app)")
                     print("  \033[93m/export\033[0m  - Save current chat history to a Markdown file")
                     print("  \033[93m/link\033[0m    - Link your MetaMask address (e.g., /link 0x...)")
                     print("  \033[93m/claim\033[0m   - Claim ZYRA tokens to your linked MetaMask")
@@ -312,7 +416,7 @@ def main():
                             bridge = ZyraWeb3Bridge()
                             
                             # Hardcoded default contract address for Hardhat account 0 first deployment
-                            bridge.set_contract_address("0x5FbDB2315678afecb367f032d93F642f64180aa3")
+                            bridge.set_contract_address("0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9")
                             
                             tx_hash = bridge.mint_reward(wallet.metamask_address, amount)
                             
@@ -327,6 +431,10 @@ def main():
                             print("Make sure you have run 'npx hardhat run scripts/deploy.js --network localhost'")
                     except ValueError:
                         print("\033[91m[Error]\033[0m Invalid amount.\n")
+                    continue
+                elif user_input.startswith('/automode '):
+                    task = user_input.split(' ', 1)[1].strip()
+                    run_automode(llm, task, history, wallet, ledger, llm.model_name)
                     continue
                 
                 # If not a slash command, process as AI prompt
