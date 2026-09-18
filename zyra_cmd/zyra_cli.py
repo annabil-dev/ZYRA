@@ -191,7 +191,19 @@ def main():
                         print(f"\033[93m[System]\033[0m Current model is: \033[96m{llm.model_name}\033[0m\n")
                     continue
                 elif cmd == '/model':
-                    print(f"\033[93m[System]\033[0m Current model is: \033[96m{llm.model_name}\033[0m. Use '/model <name>' to change.\n")
+                    print(f"\033[93m[System]\033[0m Current model is: \033[96m{llm.model_name}\033[0m")
+                    try:
+                        import urllib.request, json
+                        req = urllib.request.urlopen("http://localhost:11434/api/tags", timeout=2)
+                        data = json.loads(req.read().decode('utf-8'))
+                        models = [m['name'] for m in data.get('models', [])]
+                        if models:
+                            print("\n\033[1m[Available Models]\033[0m")
+                            for m in models:
+                                print(f"  - \033[96m{m}\033[0m")
+                    except Exception:
+                        pass
+                    print("\nUse '/model <name>' to change.\n")
                     continue
                 
                 # If not a slash command, process as AI prompt
