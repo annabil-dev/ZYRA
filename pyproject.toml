@@ -16,7 +16,9 @@ dependencies = [
     "numpy>=1.24.0",
     "httpx",
     "openai",
-    "pyautogui"
+    "pyautogui",
+    "duckduckgo-search",
+    "web3>=6.0.0"
 ]
 
 [project.optional-dependencies]

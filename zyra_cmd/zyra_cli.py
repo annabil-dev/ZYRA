@@ -189,12 +189,16 @@ def main():
                     print("  \033[93m/read\033[0m    - Read a local file (e.g., /read script.py)")
                     print("  \033[93m/search\033[0m  - Live web search (e.g., /search latest news)")
                     print("  \033[93m/export\033[0m  - Save current chat history to a Markdown file")
+                    print("  \033[93m/link\033[0m    - Link your MetaMask address (e.g., /link 0x...)")
+                    print("  \033[93m/claim\033[0m   - Claim ZYRA tokens to your linked MetaMask")
                     print("  \033[93mexit\033[0m     - Exit the CLI\n")
                     continue
                 elif cmd in ['/wallet', '/balance']:
                     balance = ledger.get_balance(wallet.address)
                     print(f"\n\033[1m[Wallet Info]\033[0m")
                     print(f"Address: \033[96m{wallet.address}\033[0m")
+                    if wallet.metamask_address:
+                        print(f"Linked Web3: \033[95m{wallet.metamask_address}\033[0m")
                     print(f"Balance: \033[92m{balance:.4f} ZYRA\033[0m\n")
                     continue
                 elif cmd == '/clear':
@@ -271,6 +275,58 @@ def main():
                         print(f"\033[92m[System]\033[0m Chat history exported to \033[96m{filename}\033[0m\n")
                     except Exception as e:
                         print(f"\033[91m[Error]\033[0m Failed to export: {e}\n")
+                    continue
+                elif user_input.startswith('/link '):
+                    addr = user_input.split(' ', 1)[1].strip()
+                    if addr.startswith('0x') and len(addr) == 42:
+                        wallet.metamask_address = addr
+                        wallet.save()
+                        print(f"\033[92m[System]\033[0m Successfully linked MetaMask address: \033[95m{addr}\033[0m\n")
+                    else:
+                        print(f"\033[91m[Error]\033[0m Invalid Ethereum address format.\n")
+                    continue
+                elif user_input.startswith('/claim'):
+                    parts = user_input.split()
+                    if len(parts) < 2:
+                        print("\033[91m[Error]\033[0m Usage: /claim <amount>\n")
+                        continue
+                    try:
+                        amount = float(parts[1])
+                        if amount <= 0:
+                            print("\033[91m[Error]\033[0m Amount must be positive.\n")
+                            continue
+                            
+                        if not wallet.metamask_address:
+                            print("\033[91m[Error]\033[0m No MetaMask address linked! Use \033[93m/link <0x_address>\033[0m first.\n")
+                            continue
+                            
+                        balance = ledger.get_balance(wallet.address)
+                        if balance < amount:
+                            print(f"\033[91m[Error]\033[0m Insufficient SQLite balance! You have {balance:.4f} ZYRA.\n")
+                            continue
+                            
+                        print(f"\033[94m[System]\033[0m Initiating Web3 Bridge to mint {amount} ZYRA...")
+                        
+                        try:
+                            from zyra_cmd.web3_bridge import ZyraWeb3Bridge
+                            bridge = ZyraWeb3Bridge()
+                            
+                            # Hardcoded default contract address for Hardhat account 0 first deployment
+                            bridge.set_contract_address("0x5FbDB2315678afecb367f032d93F642f64180aa3")
+                            
+                            tx_hash = bridge.mint_reward(wallet.metamask_address, amount)
+                            
+                            # Deduct from ledger
+                            ledger.add_withdraw_transaction(wallet.address, amount, tx_hash)
+                            
+                            print(f"\033[92m[System]\033[0m Claim successful! Tokens minted to {wallet.metamask_address}")
+                            print(f"\033[96m[TxHash]\033[0m {tx_hash}\n")
+                            
+                        except Exception as e:
+                            print(f"\033[91m[Web3 Error]\033[0m {e}\n")
+                            print("Make sure you have run 'npx hardhat run scripts/deploy.js --network localhost'")
+                    except ValueError:
+                        print("\033[91m[Error]\033[0m Invalid amount.\n")
                     continue
                 
                 # If not a slash command, process as AI prompt

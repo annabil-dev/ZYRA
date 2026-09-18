@@ -18,6 +18,7 @@ class ZyraWallet:
         self.private_key = None
         self.public_key = None
         self.address = None
+        self.metamask_address = None
         self.load_or_create_wallet()
 
     def _generate_simulated_keys(self):
@@ -46,19 +47,26 @@ class ZyraWallet:
                 self.private_key = data.get('private_key')
                 self.public_key = data.get('public_key')
                 self.address = data.get('address')
+                self.metamask_address = data.get('metamask_address')
         else:
             if HAS_ECDSA:
                 self._generate_ecdsa_keys()
             else:
                 self._generate_simulated_keys()
                 
-            os.makedirs(os.path.dirname(self.wallet_file), exist_ok=True)
-            with open(self.wallet_file, 'w') as f:
-                json.dump({
-                    "private_key": self.private_key,
-                    "public_key": self.public_key,
-                    "address": self.address
-                }, f, indent=4)
+            self.metamask_address = None
+                
+            self.save()
+
+    def save(self):
+        os.makedirs(os.path.dirname(self.wallet_file), exist_ok=True)
+        with open(self.wallet_file, 'w') as f:
+            json.dump({
+                "private_key": self.private_key,
+                "public_key": self.public_key,
+                "address": self.address,
+                "metamask_address": self.metamask_address
+            }, f, indent=4)
 
     def sign_transaction(self, tx_data: str) -> str:
         """Signs a transaction payload string with the private key."""
