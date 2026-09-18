@@ -23,13 +23,13 @@ def main():
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for d in [app_dir, ai_dir]:
             for root, dirs, files in os.walk(d):
-            for file in files:
-                if file.endswith('.pyc') or '__pycache__' in root:
-                    continue
-                file_path = os.path.join(root, file)
-                # Keep the 'app/' folder structure inside the zip
-                arcname = os.path.relpath(file_path, root_dir)
-                zipf.write(file_path, arcname)
+                for file in files:
+                    if file.endswith('.pyc') or '__pycache__' in root:
+                        continue
+                    file_path = os.path.join(root, file)
+                    # Keep the folder structure inside the zip
+                    arcname = os.path.relpath(file_path, root_dir)
+                    zipf.write(file_path, arcname)
     
     print(f"Created {zip_path}")
     
