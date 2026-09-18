@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "my-ai"
+name = "zyra-network"
 version = "0.0.1"
-description = "A locally built and trained Artificial Intelligence application."
+description = "A local agentic AI network that earns Proof of Useful Work (PoUW)."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -13,7 +13,10 @@ dependencies = [
     "PyYAML>=6.0",
     "torch>=2.0.0",
     "psutil>=5.9.0",
-    "numpy>=1.24.0"
+    "numpy>=1.24.0",
+    "httpx",
+    "openai",
+    "pyautogui"
 ]
 
 [project.optional-dependencies]
