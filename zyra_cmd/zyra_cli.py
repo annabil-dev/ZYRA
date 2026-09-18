@@ -151,18 +151,51 @@ def main():
         print("\033[1m=========================================\033[0m")
         print("\033[92m    Welcome to ZYRA Interactive CLI\033[0m")
         print("\033[1m=========================================\033[0m")
-        print("Type your commands below. Type \033[93mexit\033[0m to quit.\n")
+        print("Type your commands below. Type \033[93m/help\033[0m for available commands, or \033[93mexit\033[0m to quit.\n")
         
         while True:
             try:
                 user_input = input("\033[96mZYRA > \033[0m").strip()
                 if not user_input:
                     continue
-                if user_input.lower() in ['/exit', '/quit', 'exit', 'quit']:
+                    
+                cmd = user_input.lower()
+                if cmd in ['/exit', '/quit', 'exit', 'quit']:
                     print("\033[93mGoodbye! Keep mining ZYRA.\033[0m")
                     break
-                    
-                process_prompt(llm, user_input, history, wallet, ledger, args.model)
+                elif cmd == '/help':
+                    print("\n\033[1m[ZYRA Commands]\033[0m")
+                    print("  \033[93m/help\033[0m    - Show this help message")
+                    print("  \033[93m/wallet\033[0m  - Show current wallet address and ZYRA balance")
+                    print("  \033[93m/clear\033[0m   - Clear terminal screen and conversation history")
+                    print("  \033[93m/model\033[0m   - Change active LLM model (e.g., /model llama3.2)")
+                    print("  \033[93mexit\033[0m     - Exit the CLI\n")
+                    continue
+                elif cmd in ['/wallet', '/balance']:
+                    balance = ledger.get_balance(wallet.address)
+                    print(f"\n\033[1m[Wallet Info]\033[0m")
+                    print(f"Address: \033[96m{wallet.address}\033[0m")
+                    print(f"Balance: \033[92m{balance:.4f} ZYRA\033[0m\n")
+                    continue
+                elif cmd == '/clear':
+                    os.system('cls' if os.name == 'nt' else 'clear')
+                    history.clear()
+                    print("\033[92m[System]\033[0m Screen and conversation memory cleared.\n")
+                    continue
+                elif user_input.startswith('/model '):
+                    new_model = user_input.split(' ', 1)[1].strip()
+                    if new_model:
+                        llm.model_name = new_model
+                        print(f"\033[92m[System]\033[0m Model switched to: \033[96m{llm.model_name}\033[0m\n")
+                    else:
+                        print(f"\033[93m[System]\033[0m Current model is: \033[96m{llm.model_name}\033[0m\n")
+                    continue
+                elif cmd == '/model':
+                    print(f"\033[93m[System]\033[0m Current model is: \033[96m{llm.model_name}\033[0m. Use '/model <name>' to change.\n")
+                    continue
+                
+                # If not a slash command, process as AI prompt
+                process_prompt(llm, user_input, history, wallet, ledger, llm.model_name)
                 
             except KeyboardInterrupt:
                 print("\n\033[93mInterrupted. Type 'exit' to quit.\033[0m")
