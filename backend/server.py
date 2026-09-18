@@ -14,8 +14,8 @@ web3 = Web3(Web3.HTTPProvider(RPC_URL))
 ADMIN_PRIVATE_KEY = os.environ.get("PRIVATE_KEY", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
 admin_account = web3.eth.account.from_key(ADMIN_PRIVATE_KEY)
 
-# Contract Address we just deployed
-CONTRACT_ADDRESS = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+# Contract Address we just deployed (21M Max Supply)
+CONTRACT_ADDRESS = "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
 
 # Minimal ABI just for the functions we need
 CONTRACT_ABI = json.loads('''[

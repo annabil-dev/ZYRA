@@ -5,11 +5,11 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract ZyraToken is ERC20, Ownable {
-    // 100 Million Max Supply
-    uint256 public constant MAX_SUPPLY = 100_000_000 * 10**18;
+    // 21 Million Max Supply (Bitcoin Style)
+    uint256 public constant MAX_SUPPLY = 21_000_000 * 10**18;
     
-    // Developer receives 10% (10 Million) immediately upon deployment
-    uint256 public constant DEV_ALLOCATION = 10_000_000 * 10**18;
+    // Developer receives 10% (2.1 Million) immediately upon deployment
+    uint256 public constant DEV_ALLOCATION = 2_100_000 * 10**18;
 
     constructor() ERC20("ZYRA AI", "ZYRA") Ownable(msg.sender) {
         // Mint 10% to the developer (deployer)
