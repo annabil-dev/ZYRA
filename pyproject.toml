@@ -30,4 +30,7 @@ testpaths = [
 ]
 
 [tool.setuptools]
-packages = ["app", "ai"]
+packages = ["app", "ai", "cli"]
+
+[project.scripts]
+zyra = "cli.zyra_cli:main"

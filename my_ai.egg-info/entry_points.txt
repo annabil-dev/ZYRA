@@ -1,0 +1,2 @@
+[console_scripts]
+zyra = cli.zyra_cli:main
