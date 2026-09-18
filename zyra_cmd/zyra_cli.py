@@ -20,8 +20,28 @@ def print_animated(text):
         time.sleep(0.01)
     print()
 
+import threading
+import sys
+import time
+
 def process_prompt(llm, prompt, history, wallet, ledger, model_name):
-    print(f"\n\033[94mZYRA is thinking...\033[0m\n")
+    print() # newline
+    
+    is_thinking = True
+    def spinner():
+        spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        i = 0
+        while is_thinking:
+            sys.stdout.write(f'\r\033[94mZYRA is thinking {spinner_chars[i]}\033[0m')
+            sys.stdout.flush()
+            time.sleep(0.1)
+            i = (i + 1) % len(spinner_chars)
+        sys.stdout.write('\r\033[K') # Clear line
+        sys.stdout.flush()
+        
+    spinner_thread = threading.Thread(target=spinner)
+    spinner_thread.daemon = True
+    spinner_thread.start()
     
     start_time = time.time()
     total_tokens = 0
@@ -29,7 +49,11 @@ def process_prompt(llm, prompt, history, wallet, ledger, model_name):
     is_tool_call = False
     
     def cli_security_callback(tool_name, arguments_dict):
-        print(f"\n\033[93m[AGENT ACTION]\033[0m Executing \033[96m{tool_name}\033[0m...")
+        nonlocal is_thinking
+        if is_thinking:
+            is_thinking = False
+            spinner_thread.join()
+        print(f"\n\033[93m[AGENT ACTION]\033[0m Executing \033[96m{tool_name}\033[0m...\n")
         return True # Auto approve in CLI for developers
         
     try:
@@ -43,6 +67,10 @@ def process_prompt(llm, prompt, history, wallet, ledger, model_name):
             top_p=0.9,
             security_callback=cli_security_callback
         ):
+            if is_thinking:
+                is_thinking = False
+                spinner_thread.join()
+                
             if "tool_calls" in text:
                 is_tool_call = True
             
