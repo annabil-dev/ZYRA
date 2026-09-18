@@ -32,8 +32,8 @@ testpaths = [
     "tests",
 ]
 
-[tool.setuptools]
-packages = ["app", "ai", "zyra_cmd"]
-
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*", "ai*", "zyra_cmd*"]
 [project.scripts]
 zyra = "zyra_cmd.zyra_cli:main"
