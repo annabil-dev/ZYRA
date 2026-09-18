@@ -17,9 +17,12 @@ def main():
     
     print(f"Creating OTA update package from {app_dir}...")
     
+    ai_dir = os.path.join(root_dir, "ai")
+    
     # Create zip file
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(app_dir):
+        for d in [app_dir, ai_dir]:
+            for root, dirs, files in os.walk(d):
             for file in files:
                 if file.endswith('.pyc') or '__pycache__' in root:
                     continue
