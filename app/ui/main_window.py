@@ -7,6 +7,7 @@ from app.ui.chat_page import ChatPage
 from app.ui.settings_page import SettingsPage
 from app.ui.models_page import ModelsPage
 from app.ui.agent_dashboard import AgentDashboardPage
+from app.ui.wallet_page import WalletPage
 import os
 import sys
 
@@ -79,6 +80,7 @@ class MainWindow(QMainWindow):
             ("chat.png", "Chat"),
             ("models.png", "Models"),
             ("cpu.png", "Agent & Mining"),
+            ("dataset.png", "Wallet"),
             ("settings.png", "Settings")
         ]
         
@@ -110,6 +112,7 @@ class MainWindow(QMainWindow):
         self.chat_page = ChatPage(db_manager=self.db_manager)
         self.models_page = ModelsPage(self.hardware_info, self.chat_page)
         self.agent_page = AgentDashboardPage()
+        self.wallet_page = WalletPage()
         self.settings_page = SettingsPage(self.chat_page)
         # self.logs_page = LogsPage(self.log_file_path)
         
@@ -117,6 +120,7 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.chat_page)
         self.pages.addWidget(self.models_page)
         self.pages.addWidget(self.agent_page)
+        self.pages.addWidget(self.wallet_page)
         self.pages.addWidget(self.settings_page)
         # self.pages.addWidget(self.logs_page)
         
