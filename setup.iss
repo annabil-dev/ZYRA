@@ -1,10 +1,10 @@
 [Setup]
 AppName=ZYRA AI
-AppVersion=1.0.55
+AppVersion=1.0.88
 AppPublisher=ZYRATechnology
 DefaultDirName={autopf}\ZYRA AI
 DefaultGroupName=ZYRA AI
-OutputBaseFilename=ZYRA_AI_Setup_v1.0.83
+OutputBaseFilename=ZYRA_AI_Setup_v1.0.88
 Compression=lzma2/ultra64
 SolidCompression=yes
 SetupIconFile=app\ui\icon.ico
