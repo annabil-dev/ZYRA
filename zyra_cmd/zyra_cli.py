@@ -150,6 +150,12 @@ def main():
         process_prompt(llm, args.prompt, history, wallet, ledger, args.model)
     else:
         # Interactive REPL mode
+        from importlib.metadata import version, PackageNotFoundError
+        try:
+            cli_version = version("zyra-network")
+        except PackageNotFoundError:
+            cli_version = "dev"
+            
         logo = "\033[96m" + r"""
    _______  _______  ___ 
   /_  /\  \/  / _ \/ _ \ 
@@ -159,7 +165,7 @@ def main():
 """ + "\033[0m"
         print(logo)
         print("\033[1m=========================================\033[0m")
-        print("\033[92m    Welcome to ZYRA Interactive CLI\033[0m")
+        print(f"\033[92m    Welcome to ZYRA Interactive CLI \033[90m(v{cli_version})\033[0m")
         print("\033[1m=========================================\033[0m")
         print("Type your commands below. Type \033[93m/help\033[0m for available commands, or \033[93mexit\033[0m to quit.\n")
         

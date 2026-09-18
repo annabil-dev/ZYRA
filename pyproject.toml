@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zyra-network"
-version = "0.0.1"
+version = "0.0.2"
 description = "A local agentic AI network that earns Proof of Useful Work (PoUW)."
 readme = "README.md"
 requires-python = ">=3.10"
