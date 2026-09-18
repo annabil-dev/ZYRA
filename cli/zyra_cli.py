@@ -112,10 +112,18 @@ def main():
         process_prompt(llm, args.prompt, history, wallet, ledger, args.model)
     else:
         # Interactive REPL mode
-        print("\n\033[1m=========================================\033[0m")
+        logo = """
+\033[96m  _______   _______      _    
+ |__  /\\ \\ / /  __ \\    / \\   
+    / /  \\ V /| |__) |  / _ \\  
+   / /_   | | |  _  /  / ___ \\ 
+  /____|  |_| |_| \\_\\ /_/   \\_\\\033[0m
+        """
+        print(logo)
+        print("\033[1m=========================================\033[0m")
         print("\033[92m    Welcome to ZYRA Interactive CLI\033[0m")
         print("\033[1m=========================================\033[0m")
-        print("Type your commands below. Type \033[93m/exit\033[0m to quit.\n")
+        print("Type your commands below. Type \033[93mexit\033[0m to quit.\n")
         
         while True:
             try:
@@ -129,7 +137,7 @@ def main():
                 process_prompt(llm, user_input, history, wallet, ledger, args.model)
                 
             except KeyboardInterrupt:
-                print("\n\033[93mInterrupted. Type /exit to quit.\033[0m")
+                print("\n\033[93mInterrupted. Type 'exit' to quit.\033[0m")
             except EOFError:
                 break
 
