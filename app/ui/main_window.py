@@ -6,6 +6,7 @@ from app.ui.placeholders import PlaceholderPage
 from app.ui.chat_page import ChatPage
 from app.ui.settings_page import SettingsPage
 from app.ui.models_page import ModelsPage
+from app.ui.agent_dashboard import AgentDashboardPage
 import os
 import sys
 
@@ -77,6 +78,7 @@ class MainWindow(QMainWindow):
             ("dashboard.png", "Dashboard"),
             ("chat.png", "Chat"),
             ("models.png", "Models"),
+            ("robot.png", "Agent & Mining"),
             ("settings.png", "Settings")
         ]
         
@@ -107,12 +109,14 @@ class MainWindow(QMainWindow):
         self.dashboard_page = DashboardPage(self.hardware_info)
         self.chat_page = ChatPage(db_manager=self.db_manager)
         self.models_page = ModelsPage(self.hardware_info, self.chat_page)
+        self.agent_page = AgentDashboardPage()
         self.settings_page = SettingsPage(self.chat_page)
         # self.logs_page = LogsPage(self.log_file_path)
         
         self.pages.addWidget(self.dashboard_page)
         self.pages.addWidget(self.chat_page)
         self.pages.addWidget(self.models_page)
+        self.pages.addWidget(self.agent_page)
         self.pages.addWidget(self.settings_page)
         # self.pages.addWidget(self.logs_page)
         

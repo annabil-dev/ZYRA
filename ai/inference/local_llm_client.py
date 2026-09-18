@@ -225,12 +225,12 @@ class LocalLLMGenerator:
                         func_name = tc["function"]["name"]
                         try:
                             args = json.loads(tc["function"]["arguments"])
-                        except json.JSONDecodeError:
-                            args = {}
+                            self.logger.info(f"Executing tool: {func_name} with args: {args}")
+                            result_str = execute_tool(func_name, args, security_callback)
+                        except json.JSONDecodeError as e:
+                            self.logger.warning(f"Failed to decode tool arguments: {e}")
+                            result_str = f"Error: Failed to parse tool arguments. Ensure arguments are valid JSON. Error: {e}"
                             
-                        self.logger.info(f"Executing tool: {func_name} with args: {args}")
-                        result_str = execute_tool(func_name, args, security_callback)
-                        
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc["id"],
