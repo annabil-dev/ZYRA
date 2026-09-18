@@ -74,7 +74,45 @@ def withdraw():
         print(f"Blockchain Error: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+import random
+import time
+import math
+
+@app.route('/price', methods=['GET'])
+def get_price():
+    """
+    Simulates a live DEX Liquidity Pool price for ZYRA.
+    Uses time-based Sine waves + random noise to make the chart look organic.
+    Base price: $0.10. Ranges from $0.05 to $0.15.
+    """
+    current_time = time.time()
+    
+    # 1. Macro trend (Slow wave, period = 1 hour)
+    macro = math.sin(current_time / 3600.0) * 0.03
+    
+    # 2. Micro trend (Fast wave, period = 5 mins)
+    micro = math.sin(current_time / 300.0) * 0.015
+    
+    # 3. Random noise (Volatility)
+    noise = random.uniform(-0.005, 0.005)
+    
+    # Base price $0.10
+    base_price = 0.10
+    
+    current_price = base_price + macro + micro + noise
+    
+    # Determine trend (1h comparison)
+    past_macro = math.sin((current_time - 3600) / 3600.0) * 0.03
+    past_price = base_price + past_macro
+    percent_change = ((current_price - past_price) / past_price) * 100
+    
+    return jsonify({
+        "price_usd": round(current_price, 4),
+        "change_24h": round(percent_change, 2)
+    }), 200
+
 if __name__ == '__main__':
     print(f"Bridge Backend Server running on port 5000")
     print(f"Admin Wallet Address: {admin_account.address}")
     app.run(port=5000, debug=True)
+
