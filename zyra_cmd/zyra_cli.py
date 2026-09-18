@@ -164,9 +164,9 @@ def main():
  /____/  |__| |_| \_\/ \_|
 """ + "\033[0m"
         print(logo)
-        print("\033[1m=========================================\033[0m")
+        print("\033[1m=================================================\033[0m")
         print(f"\033[92m    Welcome to ZYRA Interactive CLI \033[90m(v{cli_version})\033[0m")
-        print("\033[1m=========================================\033[0m")
+        print("\033[1m=================================================\033[0m")
         print("Type your commands below. Type \033[93m/help\033[0m for available commands, or \033[93mexit\033[0m to quit.\n")
         
         while True:
@@ -185,6 +185,10 @@ def main():
                     print("  \033[93m/wallet\033[0m  - Show current wallet address and ZYRA balance")
                     print("  \033[93m/clear\033[0m   - Clear terminal screen and conversation history")
                     print("  \033[93m/model\033[0m   - Change active LLM model (e.g., /model llama3.2)")
+                    print("  \033[93m/sys\033[0m     - Monitor hardware (CPU & RAM usage)")
+                    print("  \033[93m/read\033[0m    - Read a local file (e.g., /read script.py)")
+                    print("  \033[93m/search\033[0m  - Live web search (e.g., /search latest news)")
+                    print("  \033[93m/export\033[0m  - Save current chat history to a Markdown file")
                     print("  \033[93mexit\033[0m     - Exit the CLI\n")
                     continue
                 elif cmd in ['/wallet', '/balance']:
@@ -220,6 +224,53 @@ def main():
                     except Exception:
                         pass
                     print("\nUse '/model <name>' to change.\n")
+                    continue
+                elif cmd == '/sys' or cmd == '/status':
+                    try:
+                        import psutil
+                        cpu = psutil.cpu_percent(interval=0.5)
+                        ram = psutil.virtual_memory()
+                        print("\n\033[1m[Hardware Radar]\033[0m")
+                        print(f"  CPU Usage: \033[96m{cpu}%\033[0m")
+                        print(f"  RAM Usage: \033[96m{ram.percent}%\033[0m ({ram.used / (1024**3):.1f}GB / {ram.total / (1024**3):.1f}GB)\n")
+                    except ImportError:
+                        print("\033[91m[Error]\033[0m psutil library not installed.\n")
+                    continue
+                elif user_input.startswith('/read '):
+                    filepath = user_input.split(' ', 1)[1].strip()
+                    try:
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        print(f"\033[92m[System]\033[0m Successfully read {len(content)} characters from {filepath}.")
+                        sys_prompt = f"I have just read the file '{filepath}'. Its content is:\n\n{content[:5000]}\n\nPlease acknowledge that you have read it and are ready to answer questions about it."
+                        process_prompt(llm, sys_prompt, history, wallet, ledger, llm.model_name)
+                    except Exception as e:
+                        print(f"\033[91m[Error]\033[0m Could not read file: {e}\n")
+                    continue
+                elif user_input.startswith('/search '):
+                    query = user_input.split(' ', 1)[1].strip()
+                    print(f"\033[94m[System]\033[0m Searching the web for: '{query}'...")
+                    try:
+                        from app.utils.web_search import search_web
+                        results = search_web(query, max_results=3)
+                        print(f"\033[92m[System]\033[0m Search completed. Analyzing results...")
+                        sys_prompt = f"I searched the web for '{query}'. Here are the latest results:\n\n{results}\n\nPlease summarize these results to answer the query."
+                        process_prompt(llm, sys_prompt, history, wallet, ledger, llm.model_name)
+                    except Exception as e:
+                        print(f"\033[91m[Error]\033[0m Web search failed: {e}\n")
+                    continue
+                elif cmd == '/export':
+                    import datetime
+                    filename = f"zyra_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+                    try:
+                        with open(filename, 'w', encoding='utf-8') as f:
+                            f.write("# ZYRA CLI Chat Export\n\n")
+                            for msg in history:
+                                role = "User" if msg['role'] == 'user' else "ZYRA"
+                                f.write(f"### {role}\n{msg['content']}\n\n")
+                        print(f"\033[92m[System]\033[0m Chat history exported to \033[96m{filename}\033[0m\n")
+                    except Exception as e:
+                        print(f"\033[91m[Error]\033[0m Failed to export: {e}\n")
                     continue
                 
                 # If not a slash command, process as AI prompt
