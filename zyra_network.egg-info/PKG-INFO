@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: zyra-network
-Version: 1.0.92
+Version: 1.0.93
 Summary: A local agentic AI network that earns Proof of Useful Work (PoUW).
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown

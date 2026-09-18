@@ -88,8 +88,11 @@ def process_prompt(llm, prompt, history, wallet, ledger, model_name):
         history.append({"role": "user", "content": prompt})
         history.append({"role": "assistant", "content": final_text})
         
-    except Exception as e:
-        print(f"\n\033[91m[ERROR]\033[0m {str(e)}")
+    except (Exception, KeyboardInterrupt) as e:
+        if is_thinking:
+            is_thinking = False
+            spinner_thread.join()
+        print(f"\n\033[91m[INTERRUPTED]\033[0m {str(e)}")
         return
         
     end_time = time.time()
@@ -124,7 +127,7 @@ You can execute bash/terminal commands to accomplish this task.
 To execute a command, output it exactly like this:
 <CMD>your command here</CMD>
 The system will run the command and feed you the terminal output.
-You must wait for the output before proceeding.
+IMPORTANT: You MUST ONLY output ONE <CMD> tag per turn. Wait for the output before issuing the next command.
 If you need to write code, use `<CMD>echo "code" > file.py</CMD>` or equivalent terminal commands.
 Once the task is 100% complete and verified, output exactly:
 <DONE>
@@ -173,11 +176,11 @@ Once the task is 100% complete and verified, output exactly:
                 total_tokens_automode += 1
                 final_text = text
             print("\n")
-        except Exception as e:
+        except (Exception, KeyboardInterrupt) as e:
             if is_thinking:
                 is_thinking = False
                 spinner_thread.join()
-            print(f"\n\033[91m[ERROR]\033[0m {str(e)}")
+            print(f"\n\033[91m[INTERRUPTED]\033[0m {str(e)}")
             break
             
         history.append({"role": "assistant", "content": final_text})
