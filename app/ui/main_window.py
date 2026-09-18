@@ -78,7 +78,7 @@ class MainWindow(QMainWindow):
             ("dashboard.png", "Dashboard"),
             ("chat.png", "Chat"),
             ("models.png", "Models"),
-            ("robot.png", "Agent & Mining"),
+            ("cpu.png", "Agent & Mining"),
             ("settings.png", "Settings")
         ]
         
