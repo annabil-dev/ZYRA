@@ -2,8 +2,6 @@ README.md
 pyproject.toml
 app/application.py
 app/main.py
-cli/__init__.py
-cli/zyra_cli.py
 my_ai.egg-info/PKG-INFO
 my_ai.egg-info/SOURCES.txt
 my_ai.egg-info/dependency_links.txt
@@ -38,3 +36,5 @@ tests/test_transformer_checkpoint.py
 tests/test_transformer_model.py
 tests/test_transformer_overfit.py
 tests/test_weight_tying.py
+zyra_cmd/__init__.py
+zyra_cmd/zyra_cli.py
