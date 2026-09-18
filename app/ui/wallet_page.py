@@ -1,5 +1,6 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
-                               QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QFrame)
+                               QLabel, QTableWidget, QTableWidgetItem, QHeaderView, QFrame,
+                               QLineEdit, QPushButton, QMessageBox)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 import os
@@ -64,6 +65,20 @@ class WalletPage(QWidget):
         card_layout.addWidget(lbl_address)
         
         main_layout.addWidget(card_frame)
+        
+        # Withdraw Section
+        withdraw_layout = QHBoxLayout()
+        self.metamask_input = QLineEdit()
+        self.metamask_input.setPlaceholderText("Enter MetaMask Address (0x...)")
+        self.metamask_input.setStyleSheet("padding: 10px; border-radius: 5px; background: #1e293b; color: white;")
+        
+        self.btn_withdraw = QPushButton("Withdraw to MetaMask")
+        self.btn_withdraw.setStyleSheet("padding: 10px 20px; border-radius: 5px; background: #4f46e5; color: white; font-weight: bold;")
+        self.btn_withdraw.clicked.connect(self.handle_withdraw)
+        
+        withdraw_layout.addWidget(self.metamask_input)
+        withdraw_layout.addWidget(self.btn_withdraw)
+        main_layout.addLayout(withdraw_layout)
 
         # Transaction History
         lbl_history = QLabel("Recent Transactions (PoUW Mining)")
@@ -107,10 +122,20 @@ class WalletPage(QWidget):
             self.tx_table.setItem(i, 0, QTableWidgetItem(dt))
             
             type_item = QTableWidgetItem(tx['type'])
-            type_item.setForeground(Qt.green if tx['type'] == 'MINT' else Qt.white)
+            if tx['type'] == 'MINT':
+                type_item.setForeground(Qt.green)
+            elif tx['type'] == 'WITHDRAW':
+                type_item.setForeground(Qt.red)
+            else:
+                type_item.setForeground(Qt.white)
             self.tx_table.setItem(i, 1, type_item)
             
-            amount_str = f"+{tx['amount']}" if tx['type'] == 'MINT' else str(tx['amount'])
+            if tx['type'] == 'MINT':
+                amount_str = f"+{tx['amount']}"
+            elif tx['type'] == 'WITHDRAW':
+                amount_str = f"-{tx['amount']}"
+            else:
+                amount_str = str(tx['amount'])
             self.tx_table.setItem(i, 2, QTableWidgetItem(amount_str))
             
             txid_item = QTableWidgetItem(tx['txid'])
@@ -122,3 +147,45 @@ class WalletPage(QWidget):
         balance = self.ledger.get_balance(self.wallet.address)
         self.lbl_balance.setText(f"{balance:.4f} ZYRA")
         self.populate_transactions()
+        
+    def handle_withdraw(self):
+        address = self.metamask_input.text().strip()
+        if not address.startswith("0x") or len(address) != 42:
+            QMessageBox.warning(self, "Invalid Address", "Please enter a valid MetaMask address (0x...).")
+            return
+            
+        balance = self.ledger.get_balance(self.wallet.address)
+        if balance <= 0:
+            QMessageBox.warning(self, "Insufficient Balance", "You have no ZYRA to withdraw.")
+            return
+            
+        import requests
+        try:
+            self.btn_withdraw.setEnabled(False)
+            self.btn_withdraw.setText("Processing...")
+            
+            payload = {
+                "metamask_address": address,
+                "amount": balance,
+                "local_wallet": self.wallet.address
+            }
+            
+            # Send to Bridge Server (running locally for testing)
+            response = requests.post("http://127.0.0.1:5000/withdraw", json=payload)
+            data = response.json()
+            
+            if response.status_code == 200:
+                # Update local ledger to deduct balance (add a negative transaction)
+                self.ledger.add_withdraw_transaction(self.wallet.address, balance, data.get("tx_hash", ""))
+                self.refresh_data()
+                QMessageBox.information(self, "Success", f"Withdrawal successful!\nTX Hash: {data.get('tx_hash')}")
+                self.metamask_input.clear()
+            else:
+                QMessageBox.warning(self, "Error", f"Withdrawal failed: {data.get('error')}")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Network Error", f"Could not connect to Bridge Server.\nEnsure the server is running on port 5000.\nError: {e}")
+        finally:
+            self.btn_withdraw.setEnabled(True)
+            self.btn_withdraw.setText("Withdraw to MetaMask")
+

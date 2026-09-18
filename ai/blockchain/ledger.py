@@ -137,3 +137,32 @@ class ZyraLedger:
                 "timestamp": r[4]
             })
         return result
+
+    def add_withdraw_transaction(self, sender_address: str, amount: float, web3_txid: str):
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        
+        timestamp = time.time()
+        c.execute("SELECT hash, height FROM blocks ORDER BY height DESC LIMIT 1")
+        prev_block = c.fetchone()
+        prev_hash = prev_block[0]
+        new_height = prev_block[1] + 1
+        
+        # We store the web3_txid as the local txid for cross-reference
+        txid = web3_txid if web3_txid else hashlib.sha256(f"WITHDRAW:{sender_address}:{amount}:{timestamp}".encode()).hexdigest()
+        
+        block_hash = hashlib.sha256(f"{new_height}{timestamp}{prev_hash}{txid}".encode()).hexdigest()
+        c.execute('''
+            INSERT INTO blocks (height, timestamp, prev_hash, merkle_root, hash)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (new_height, timestamp, prev_hash, txid, block_hash))
+        
+        c.execute('''
+            INSERT INTO transactions (txid, block_height, sender, receiver, amount, type, signature, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (txid, new_height, sender_address, "WEB3_BRIDGE", amount, "WITHDRAW", "LOCAL_AUTH", timestamp))
+        
+        c.execute("UPDATE balances SET balance = balance - ? WHERE address = ?", (amount, sender_address))
+        
+        conn.commit()
+        conn.close()
