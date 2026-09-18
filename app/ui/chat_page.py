@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QDoubleSpinBox, QGroupBox, QMessageBox, QFileDialog,
                                QComboBox, QListWidget, QListWidgetItem, QSplitter,
                                QScrollArea, QFrame, QGridLayout)
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 import sqlite3
 import json
 from app.ui.chat_bubble import ChatBubbleWidget
