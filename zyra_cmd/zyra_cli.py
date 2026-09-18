@@ -112,13 +112,13 @@ def main():
         process_prompt(llm, args.prompt, history, wallet, ledger, args.model)
     else:
         # Interactive REPL mode
-        logo = """
-\033[96m  _______   _______      _    
- |__  /\\ \\ / /  __ \\    / \\   
-    / /  \\ V /| |__) |  / _ \\  
-   / /_   | | |  _  /  / ___ \\ 
-  /____|  |_| |_| \\_\\ /_/   \\_\\\033[0m
-        """
+        logo = "\033[96m" + r"""
+   _______  _______  ___ 
+  /_  /\  \/  / _ \/ _ \ 
+   / /  \    /|   / /_\ \
+  / /__  |  | | |\ \  _  |
+ /____/  |__| |_| \_\/ \_|
+""" + "\033[0m"
         print(logo)
         print("\033[1m=========================================\033[0m")
         print("\033[92m    Welcome to ZYRA Interactive CLI\033[0m")
