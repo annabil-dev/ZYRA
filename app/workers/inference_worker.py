@@ -12,6 +12,7 @@ class InferenceWorker(QThread):
     metrics_updated = Signal(float, float, float) # latency_ms, tokens_per_sec, vram_mb
     generation_finished = Signal()
     generation_error = Signal(str)
+    pouw_mined = Signal(dict) # Emit proof payload when work is done
     
     # New signal for Agentic Write & Execute security popup
     # Emits (tool_name, arguments_json_string)
@@ -70,9 +71,19 @@ class InferenceWorker(QThread):
             if "security_callback" in sig.parameters:
                 kwargs["security_callback"] = _security_callback
                 
+            
+            final_metrics = {}
+            total_tokens = 0
+            is_tool_call = False
+            
             for text, delta, metrics in self.generator.generate(**kwargs):
                 delta_buffer += delta
                 current_time = time.time()
+                total_tokens += 1
+                final_metrics = metrics
+                
+                if "tool_calls" in text:
+                    is_tool_call = True
                 
                 # Emit every ~40ms to avoid flooding UI thread (causes stuttering)
                 if current_time - last_emit_time > 0.04:
@@ -88,6 +99,31 @@ class InferenceWorker(QThread):
             # Emit any remaining text in buffer at the end
             if delta_buffer:
                 self.token_generated.emit(text, delta_buffer)
+                
+            # --- PoUW Integration ---
+            from ai.blockchain.pouw_validator import PoUWValidator
+            import os
+            
+            user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
+            wallet_path = os.path.join(user_data_dir, "wallet.json")
+            wallet_address = "Z_UNKNOWN"
+            if os.path.exists(wallet_path):
+                try:
+                    with open(wallet_path, 'r') as f:
+                        wallet_address = json.load(f).get("address", "Z_UNKNOWN")
+                except: pass
+                
+            task_type = 'AGENT_EXECUTION' if is_tool_call else 'CHAT_INFERENCE'
+            proof = PoUWValidator.generate_proof(
+                task_type=task_type,
+                prompt=self.prompt,
+                tokens=total_tokens,
+                metrics=final_metrics,
+                wallet_address=wallet_address
+            )
+            
+            if proof['reward'] > 0:
+                self.pouw_mined.emit(proof)
                 
             self.generation_finished.emit()
             

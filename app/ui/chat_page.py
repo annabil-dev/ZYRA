@@ -43,6 +43,8 @@ MODEL_PRIORITY = [
 ]
 
 class ChatPage(QWidget):
+    pouw_mined_global = Signal(dict)
+    
     def __init__(self, db_manager=None):
         super().__init__()
         
@@ -1185,6 +1187,7 @@ class ChatPage(QWidget):
         self.worker.generation_finished.connect(self.on_generation_finished)
         self.worker.generation_error.connect(self.on_generation_error)
         self.worker.security_check_requested.connect(self.handle_security_check)
+        self.worker.pouw_mined.connect(self.pouw_mined_global.emit)
         
         self.worker.start()
 

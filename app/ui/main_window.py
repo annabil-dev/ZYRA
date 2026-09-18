@@ -113,6 +113,7 @@ class MainWindow(QMainWindow):
         self.models_page = ModelsPage(self.hardware_info, self.chat_page)
         self.agent_page = AgentDashboardPage()
         self.wallet_page = WalletPage()
+        self.chat_page.pouw_mined_global.connect(self.handle_pouw_mined)
         self.settings_page = SettingsPage(self.chat_page)
         # self.logs_page = LogsPage(self.log_file_path)
         
@@ -137,6 +138,12 @@ class MainWindow(QMainWindow):
         # self.setup_system_tray(icon_path)
         self.setup_global_hotkey()
         self.setup_hot_reload()
+
+    def handle_pouw_mined(self, proof):
+        # Insert to ledger
+        self.wallet_page.ledger.add_pouw_reward(proof['wallet'], proof['reward'], proof)
+        # Update wallet UI
+        self.wallet_page.refresh_data()
 
     def handle_spotlight_query(self, query: str):
         self.show_and_activate()
