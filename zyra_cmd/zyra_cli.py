@@ -131,6 +131,8 @@ Once the task is 100% complete and verified, output exactly:
 """
     history.append({"role": "user", "content": sys_prompt})
     
+    total_tokens_automode = 0
+    
     max_iterations = 15
     for i in range(max_iterations):
         print(f"\033[90m--- Iteration {i+1}/{max_iterations} ---\033[0m")
@@ -168,6 +170,7 @@ Once the task is 100% complete and verified, output exactly:
                 
                 sys.stdout.write(f"\033[37m{delta}\033[0m")
                 sys.stdout.flush()
+                total_tokens_automode += 1
                 final_text = text
             print("\n")
         except Exception as e:
@@ -186,7 +189,17 @@ Once the task is 100% complete and verified, output exactly:
         cmd_match = re.search(r"<CMD>(.*?)</CMD>", final_text, re.DOTALL)
         if cmd_match:
             command = cmd_match.group(1).strip()
-            print(f"\n\033[93m[Agent Action]\033[0m Executing: \033[96m{command}\033[0m")
+            print(f"\n\033[93m[Agent Action]\033[0m Wants to execute: \033[96m{command}\033[0m")
+            
+            # Permission check
+            print(f"\033[93m[Security]\033[0m ZYRA is requesting permission to run this command.")
+            choice = input(f"Allow execution? [Y/n]: ").strip().lower()
+            if choice == 'n':
+                print(f"\033[91m[Agent Action]\033[0m Execution denied by user.\n")
+                history.append({"role": "user", "content": f"I denied permission to run the command: `{command}`. Please find an alternative or ask for clarification."})
+                continue
+                
+            print(f"\033[92m[Agent Action]\033[0m Executing...")
             try:
                 result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60)
                 stdout = result.stdout.strip()
@@ -213,6 +226,22 @@ Once the task is 100% complete and verified, output exactly:
             
     else:
         print(f"\033[93m[Auto-Mode]\033[0m Reached maximum iterations ({max_iterations}). Stopping.\n")
+
+    # Reward for automode
+    print("\033[93m[PoUW Validator]\033[0m Submitting Proof of Useful Work for Auto-Mode...")
+    proof = PoUWValidator.generate_proof(
+        task_type="AGENT_EXECUTION",
+        prompt=initial_task,
+        tokens=total_tokens_automode,
+        metrics={"latency_ms": 100, "vram_mb": 0.0},
+        wallet_address=wallet.address
+    )
+    reward = proof.get('reward', 0.0)
+    if reward > 0:
+        ledger.add_pouw_reward(wallet.address, reward, proof)
+        print(f"\033[92m[SUCCESS]\033[0m You earned \033[1m+{reward:.4f} ZYRA\033[0m for this Auto-Mode task!\n")
+    else:
+        print("\033[91m[REJECTED]\033[0m Task did not qualify for PoUW rewards.\n")
 
 
 def main():
