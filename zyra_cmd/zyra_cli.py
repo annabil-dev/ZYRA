@@ -117,7 +117,7 @@ def process_prompt(llm, prompt, history, wallet, ledger, model_name):
         print("\033[91m[REJECTED]\033[0m Task did not qualify for PoUW rewards.\n")
 
 
-def run_automode(llm, initial_task: str, history: list, wallet: ZyraWallet, ledger: ZyraLedger, model_name: str):
+def run_automode(llm, initial_task: str, history: list, wallet: ZyraWallet, ledger: ZyraLedger, model_name: str, auto_yes: bool = False):
     print(f"\n\033[95m[Auto-Mode]\033[0m Initializing Autonomous Agent...")
     print(f"\033[95m[Auto-Mode]\033[0m Task: \033[96m{initial_task}\033[0m\n")
     
@@ -185,22 +185,31 @@ Once the task is 100% complete and verified, output exactly:
             
         history.append({"role": "assistant", "content": final_text})
         
-        if "<DONE>" in final_text:
-            print(f"\033[92m[Auto-Mode]\033[0m Task completed successfully!\n")
-            break
-            
         cmd_match = re.search(r"<CMD>(.*?)</CMD>", final_text, re.DOTALL)
         if cmd_match:
             command = cmd_match.group(1).strip()
             print(f"\n\033[93m[Agent Action]\033[0m Wants to execute: \033[96m{command}\033[0m")
             
             # Permission check
-            print(f"\033[93m[Security]\033[0m ZYRA is requesting permission to run this command.")
-            choice = input(f"Allow execution? [Y/n]: ").strip().lower()
-            if choice == 'n':
-                print(f"\033[91m[Agent Action]\033[0m Execution denied by user.\n")
-                history.append({"role": "user", "content": f"I denied permission to run the command: `{command}`. Please find an alternative or ask for clarification."})
-                continue
+            is_dangerous = any(keyword in command.lower() for keyword in ["rm ", "del ", "rmdir ", "rd ", "format ", "drop ", "sudo ", ">", ">>"])
+            
+            if auto_yes and not is_dangerous:
+                print(f"\033[93m[Security]\033[0m Auto-approved non-critical command.")
+            else:
+                if is_dangerous and auto_yes:
+                    print(f"\033[91m[Security Warning]\033[0m Dangerous command detected. Bypass overridden.")
+                else:
+                    print(f"\033[93m[Security]\033[0m ZYRA is requesting permission to run this command.")
+                
+                choice = input(f"Allow execution? [Y/n]: ").strip().lower()
+                if choice == 'n':
+                    print(f"\033[91m[Agent Action]\033[0m Execution denied by user.\n")
+                    history.append({"role": "user", "content": f"I denied permission to run the command: `{command}`. Please find an alternative or ask for clarification."})
+                    
+                    if "<DONE>" in final_text:
+                        print(f"\033[92m[Auto-Mode]\033[0m Task marked as DONE by agent.\n")
+                        break
+                    continue
                 
             print(f"\033[92m[Agent Action]\033[0m Executing...")
             try:
@@ -224,7 +233,12 @@ Once the task is 100% complete and verified, output exactly:
             except Exception as e:
                 print(f"\033[91m[Agent Error]\033[0m {str(e)}\n")
                 history.append({"role": "user", "content": f"Command execution failed: {str(e)}"})
-        else:
+                
+        if "<DONE>" in final_text:
+            print(f"\033[92m[Auto-Mode]\033[0m Task completed successfully!\n")
+            break
+            
+        if not cmd_match and "<DONE>" not in final_text:
             history.append({"role": "user", "content": "Please continue. Use <CMD> to execute a command, or <DONE> if finished."})
             
     else:
@@ -466,7 +480,14 @@ def main():
                     continue
                 elif user_input.startswith('/automode '):
                     task = user_input.split(' ', 1)[1].strip()
-                    run_automode(llm, task, history, wallet, ledger, llm.model_name)
+                    auto_yes = False
+                    if task.startswith('-y '):
+                        auto_yes = True
+                        task = task[3:].strip()
+                    elif task.startswith('--y '):
+                        auto_yes = True
+                        task = task[4:].strip()
+                    run_automode(llm, task, history, wallet, ledger, llm.model_name, auto_yes)
                     continue
                 
                 # If not a slash command, process as AI prompt
