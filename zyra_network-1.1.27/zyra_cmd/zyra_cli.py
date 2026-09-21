@@ -245,13 +245,11 @@ NEVER try to run `python script.py` before you have actually created it!
         planner_history.append({"role": "assistant", "content": planner_output})
         full_trajectory_log.append({"role": "planner", "content": planner_output})
         
-        delegate_matches = re.findall(r"<DELEGATE>(.*?)(?:</DELEGATE>|$)", planner_output, re.DOTALL)
-        
-        if "<CONFIRM_DONE>" in planner_output and not delegate_matches:
+        if "<CONFIRM_DONE>" in planner_output:
             print(f"\033[92m[Multi-Agent Swarm]\033[0m Task completed and confirmed successfully!\n")
             break
 
-        if "<ALL_DONE>" in planner_output and not delegate_matches:
+        if "<ALL_DONE>" in planner_output:
             if successful_delegations == 0:
                 print(f"\033[93m[Planner Agent]\033[0m Attempted to finish before any tasks were completed. Rejected.")
                 planner_history.append({"role": "user", "content": "You cannot finish yet. You must delegate at least one step to the Coder using <DELEGATE> and it must complete successfully first."})
@@ -268,6 +266,8 @@ NEVER try to run `python script.py` before you have actually created it!
                         "content": f"Are you absolutely sure you have completed ALL parts of the original task: '{initial_task}'? If you missed any step, you MUST continue using <DELEGATE>. If you are 100% sure everything is done, reply with <CONFIRM_DONE>."
                     })
                     continue
+            
+        delegate_matches = re.findall(r"<DELEGATE>(.*?)(?:</DELEGATE>|$)", planner_output, re.DOTALL)
         if not delegate_matches or not any(m.strip() for m in delegate_matches):
             spam_text = planner_output.strip()
             if len(spam_text) > 300:
