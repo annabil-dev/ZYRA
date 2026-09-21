@@ -54,7 +54,9 @@ class LocalLLMGenerator:
         top_k: int = 40,
         top_p: float = 0.9,
         image_paths: list = None,
-        security_callback: callable = None
+        security_callback: callable = None,
+        override_model: str = None,
+        use_tools: bool = True
     ) -> Generator[Tuple[str, str, Dict[str, Any]], None, None]:
         
         self.is_interrupted = False
@@ -85,18 +87,19 @@ class LocalLLMGenerator:
         except Exception as e:
             self.logger.error(f"Failed to load long-term memory context: {e}")
             
-        # INJECT AGI INSTRUCTIONS
-        agi_instructions = (
-            "[AGI CAPABILITIES]\n"
-            "Kamu adalah Autonomous Agent. Kamu memiliki akses ke tool `execute_python_script` untuk mengontrol komputer pengguna secara nyata.\n"
-            "Jika pengguna memintamu untuk:\n"
-            "- Membuka aplikasi\n"
-            "- Mengetik sesuatu atau menggerakkan mouse\n"
-            "- Membuat grafik atau perhitungan kompleks\n"
-            "JANGAN HANYA MENAMPILKAN KODENYA DI CHAT. Gunakan tool `execute_python_script` untuk MENJALANKAN kodenya di latar belakang!\n"
-            "Contoh untuk buka Chrome: import pyautogui, time; pyautogui.press('win'); time.sleep(1); pyautogui.write('chrome'); pyautogui.press('enter')."
-        )
-        system_prompt = f"{system_prompt}\n\n{agi_instructions}"
+        # INJECT AGI INSTRUCTIONS (ONLY IF TOOLS ENABLED)
+        if use_tools:
+            agi_instructions = (
+                "[AGI CAPABILITIES]\n"
+                "Kamu adalah Autonomous Agent. Kamu memiliki akses ke tool `execute_python_script` untuk mengontrol komputer pengguna secara nyata.\n"
+                "Jika pengguna memintamu untuk:\n"
+                "- Membuka aplikasi\n"
+                "- Mengetik sesuatu atau menggerakkan mouse\n"
+                "- Membuat grafik atau perhitungan kompleks\n"
+                "JANGAN HANYA MENAMPILKAN KODENYA DI CHAT. Gunakan tool `execute_python_script` untuk MENJALANKAN kodenya di latar belakang!\n"
+                "Contoh untuk buka Chrome: import pyautogui, time; pyautogui.press('win'); time.sleep(1); pyautogui.write('chrome'); pyautogui.press('enter')."
+            )
+            system_prompt = f"{system_prompt}\n\n{agi_instructions}"
             
         messages = [
             {"role": "system", "content": system_prompt}
@@ -134,7 +137,7 @@ class LocalLLMGenerator:
         # Tool execution loop
         MAX_TOOL_CALLS = 5
         tool_call_count = 0
-        tools_supported = True
+        tools_supported = use_tools
         
         while tool_call_count < MAX_TOOL_CALLS:
             if self.is_interrupted:
@@ -142,13 +145,15 @@ class LocalLLMGenerator:
                 
             try:
                 kwargs = {
-                    "model": self.model_name,
+                    "model": override_model or self.model_name,
                     "messages": messages,
                     "stream": True,
                     "temperature": temperature,
                     "top_p": top_p,
                     "max_tokens": max_tokens,
-                    "extra_body": {"top_k": top_k}
+                    "frequency_penalty": 0.2,
+                    "presence_penalty": 0.1,
+                    "extra_body": {"top_k": top_k, "repeat_penalty": 1.1}
                 }
                 if tools_supported:
                     kwargs["tools"] = TOOLS_SCHEMA
@@ -259,7 +264,7 @@ class LocalLLMGenerator:
                 err_str = str(e)
                 # Fallback for models that do not support tools
                 if "does not support tools" in err_str and tools_supported:
-                    self.logger.warning(f"Model {self.model_name} does not support tools. Retrying without tools.")
+                    self.logger.warning(f"Model {override_model or self.model_name} does not support tools. Retrying without tools.")
                     tools_supported = False
                     continue
                     

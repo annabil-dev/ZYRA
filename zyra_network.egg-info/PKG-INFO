@@ -1,7 +1,7 @@
 Metadata-Version: 2.4
 Name: zyra-network
-Version: 1.0.93
-Summary: A local agentic AI network that earns Proof of Useful Work (PoUW).
+Version: 1.1.24
+Summary: ZYRA Developer CLI - Agentic AI + PoUW Mining
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
 Requires-Dist: PySide6>=6.5.0
@@ -14,6 +14,8 @@ Requires-Dist: openai
 Requires-Dist: pyautogui
 Requires-Dist: duckduckgo-search
 Requires-Dist: web3>=6.0.0
+Requires-Dist: python-dotenv
+Requires-Dist: prompt_toolkit>=3.0.0
 Provides-Extra: dev
 Requires-Dist: pytest; extra == "dev"
 Requires-Dist: pyinstaller; extra == "dev"

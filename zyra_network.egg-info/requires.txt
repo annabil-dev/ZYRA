@@ -8,6 +8,8 @@ openai
 pyautogui
 duckduckgo-search
 web3>=6.0.0
+python-dotenv
+prompt_toolkit>=3.0.0
 
 [dev]
 pytest

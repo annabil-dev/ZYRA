@@ -1,0 +1,14 @@
+PySide6>=6.5.0
+PyYAML>=6.0
+torch>=2.0.0
+psutil>=5.9.0
+numpy>=1.24.0
+httpx
+openai
+pyautogui
+duckduckgo-search
+web3>=6.0.0
+
+[dev]
+pytest
+pyinstaller

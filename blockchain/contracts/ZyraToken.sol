@@ -10,6 +10,11 @@ contract ZyraToken is ERC20, Ownable {
     
     // Developer receives 10% (2.1 Million) immediately upon deployment
     uint256 public constant DEV_ALLOCATION = 2_100_000 * 10**18;
+    
+    // --- Security: Daily Minting Cap ---
+    uint256 public constant DAILY_MINT_CAP = 100 * 10**18;
+    uint256 public dailyMinted;
+    uint256 public lastResetTime;
 
     constructor() ERC20("ZYRA AI", "ZYRA") Ownable(msg.sender) {
         // Mint 10% to the developer (deployer)
@@ -23,6 +28,16 @@ contract ZyraToken is ERC20, Ownable {
      */
     function mintReward(address to, uint256 amount) public onlyOwner {
         require(totalSupply() + amount <= MAX_SUPPLY, "ZYRA: Max supply exceeded");
+        
+        // Reset daily limits if a new day has started
+        if (block.timestamp >= lastResetTime + 1 days) {
+            dailyMinted = 0;
+            lastResetTime = block.timestamp;
+        }
+        
+        require(dailyMinted + amount <= DAILY_MINT_CAP, "ZYRA: Daily minting cap exceeded");
+        
+        dailyMinted += amount;
         _mint(to, amount);
     }
 }
