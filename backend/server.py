@@ -1,6 +1,11 @@
 import os
 import json
-from flask import Flask, request, jsonify
+import time
+import sqlite3
+import uuid
+import requests
+import urllib.request
+from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from web3 import Web3
 from dotenv import load_dotenv
@@ -8,7 +13,7 @@ from dotenv import load_dotenv
 # Load root .env
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder='templates', static_folder='static')
 CORS(app)
 
 # Celo Sepolia Testnet
@@ -55,95 +60,247 @@ CONTRACT_ABI = json.loads('''[
 zyra_contract = web3.eth.contract(address=web3.to_checksum_address(CONTRACT_ADDRESS), abi=CONTRACT_ABI)
 
 # In-memory tracking for rate limiting (wallet -> list of timestamps)
-import time
 user_task_history = {}
 
 # Global recent tasks for the Web UI Dashboard
 recent_tasks = []
 
-@app.route('/verify_pouw', methods=['POST'])
-def verify_pouw():
+# Initialize SQLite Database for Task Pool
+DB_FILE = os.path.join(os.path.dirname(__file__), "zyra_tasks.db")
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS tasks (
+            id TEXT PRIMARY KEY,
+            prompt TEXT NOT NULL,
+            reward REAL NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at REAL NOT NULL,
+            completed_by TEXT,
+            completed_at REAL
+        )
+    ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS pending_validations (
+            id TEXT PRIMARY KEY,
+            wallet TEXT NOT NULL,
+            trajectory_hash TEXT NOT NULL,
+            reward REAL NOT NULL,
+            trajectory_log TEXT NOT NULL,
+            task_id TEXT,
+            created_at REAL NOT NULL
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# P2P Bootstrap Tracker
+registered_peers = set()
+
+@app.route('/register_peer', methods=['POST'])
+def register_peer():
+    data = request.json
+    ws_url = data.get('ws_url')
+    if ws_url:
+        registered_peers.add(ws_url)
+    return jsonify({"peers": list(registered_peers)}), 200
+
+@app.route('/client/submit_task', methods=['POST'])
+def submit_task():
+    """Client submits a task to the ZYRA network"""
+    data = request.json
+    prompt = data.get('prompt')
+    reward = data.get('reward', 2.5) # Default 2.5 ZYRA
+    
+    if not prompt:
+        return jsonify({"error": "Prompt is required"}), 400
+        
+    task_id = str(uuid.uuid4())
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('INSERT INTO tasks (id, prompt, reward, status, created_at) VALUES (?, ?, ?, ?, ?)',
+              (task_id, prompt, reward, 'pending', time.time()))
+    conn.commit()
+    conn.close()
+    
+    return jsonify({
+        "message": "Task submitted to the pool successfully",
+        "task_id": task_id,
+        "reward": reward
+    }), 201
+
+@app.route('/miner/get_task', methods=['GET'])
+def get_task():
+    """Miner requests a task from the network"""
+    wallet = request.args.get('wallet')
+    if not wallet:
+        return jsonify({"error": "Wallet address required"}), 400
+        
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    
+    # Get the oldest pending task
+    c.execute('SELECT * FROM tasks WHERE status = "pending" ORDER BY created_at ASC LIMIT 1')
+    task = c.fetchone()
+    
+    if not task:
+        conn.close()
+        return jsonify({"message": "No tasks available"}), 404
+        
+    # Mark as processing (using wallet to lock it temporarily if we wanted to, but for now just status change)
+    # Actually for MVP, let's just leave it as 'pending' until they complete it, or mark it processing
+    c.execute('UPDATE tasks SET status = "processing" WHERE id = ?', (task['id'],))
+    conn.commit()
+    conn.close()
+    
+    return jsonify({
+        "task_id": task['id'],
+        "prompt": task['prompt'],
+        "reward": task['reward']
+    }), 200
+
+@app.route('/submit_pouw', methods=['POST'])
+def submit_pouw():
     """
-    Called by the ZYRA CLI when a task is completed.
-    Verifies the Trajectory Hash and mints ZYRA tokens to the miner's wallet.
+    Called by the ZYRA CLI when a task is completed (Miner).
+    Checks rate limits, then adds the Trajectory to the Mempool for P2P Validation.
     """
     data = request.json
     wallet_address = data.get('user_wallet')
     trajectory_hash = data.get('trajectory_hash')
-    
+    task_id = data.get('task_id')
+    reward_amount = float(data.get('reward', 2.5))
     trajectory_log = data.get('trajectory_log', [])
     
-    if not wallet_address or not trajectory_hash:
-        return jsonify({"error": "Missing user_wallet or trajectory_hash"}), 400
+    if not wallet_address or not trajectory_hash or not trajectory_log:
+        return jsonify({"error": "Missing required data"}), 400
         
-    print(f"\n[Bridge] Received PoUW from {wallet_address}")
+    print(f"\n[Mempool] Received PoUW submission from {wallet_address}")
     
-    # Check Staking Tier and Rate Limits
+    # Check Staking Tier and Rate Limits (to prevent spamming the mempool)
     try:
         balance_wei = zyra_contract.functions.balanceOf(web3.to_checksum_address(wallet_address)).call()
         balance_zyra = float(web3.from_wei(balance_wei, 'ether'))
     except Exception as e:
-        print(f"[Bridge] Failed to fetch balance: {e}")
+        print(f"[Mempool] Failed to fetch balance: {e}")
         balance_zyra = 0.0
         
     if balance_zyra >= 10000:
-        limit = float('inf') # Tier 3
+        limit = float('inf')
     elif balance_zyra >= 1000:
-        limit = 100 # Tier 2
+        limit = 100
     elif balance_zyra >= 100:
-        limit = 30 # Tier 1
+        limit = 30
     else:
-        limit = 5 # Tier 0
+        limit = 5
         
     now = time.time()
     if wallet_address not in user_task_history:
         user_task_history[wallet_address] = []
         
-    # Clean old history (> 1 hour)
     user_task_history[wallet_address] = [t for t in user_task_history[wallet_address] if now - t < 3600]
     
     if len(user_task_history[wallet_address]) >= limit:
-        print(f"[Bridge] Rate Limit Exceeded for {wallet_address} (Tier Limit: {limit}/hr).")
-        return jsonify({"error": f"Rate limit exceeded. Your current balance ({balance_zyra:.2f} ZYRA) allows {limit} tasks per hour. Stake more ZYRA to increase limit."}), 429
+        print(f"[Mempool] Rate Limit Exceeded for {wallet_address}")
+        return jsonify({"error": f"Rate limit exceeded. Balance: {balance_zyra:.2f} ZYRA. Limit: {limit}/hr."}), 429
         
-    print(f"[Bridge] Trajectory Hash: {trajectory_hash}")
-    print(f"[Bridge] Validating Trajectory... ({len(trajectory_log)} steps)")
-    
-    if not trajectory_log:
-        return jsonify({"error": "Missing trajectory_log for validation"}), 400
-        
-    # Heuristic Validation
-    has_delegate = False
-    has_success = False
-    for step in trajectory_log:
-        content = step.get('content', '')
-        if "<DELEGATE>" in content:
-            has_delegate = True
-        if "<CONFIRM_DONE>" in content or "<ALL_DONE>" in content:
-            has_success = True
-            
-    if not has_delegate:
-        print("[Bridge] Validation Failed: No real work found.")
-        return jsonify({"error": "Validation failed: Fake task, no delegation found."}), 400
-        
-    if not has_success:
-        print("[Bridge] Validation Failed: Task not successfully completed.")
-        return jsonify({"error": "Validation failed: Task not completed."}), 400
-        
-    print("[Bridge] Validation Passed! Processing reward...")
-    
-    # Extract dynamic reward, limit to max 50 ZYRA per task for security
-    reward_amount = float(data.get('reward', 2.5))
     if reward_amount <= 0 or reward_amount > 50.0:
         return jsonify({"error": "Invalid reward amount"}), 400
+
+    # Add to SQLite Mempool
+    validation_id = str(uuid.uuid4())
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('INSERT INTO pending_validations (id, wallet, trajectory_hash, reward, trajectory_log, task_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+              (validation_id, wallet_address, trajectory_hash, reward_amount, json.dumps(trajectory_log), task_id, now))
+    conn.commit()
+    conn.close()
+
+    print(f"[Mempool] Task added to validation queue! ID: {validation_id}")
+    return jsonify({
+        "status": "pending_validation",
+        "message": "Task submitted to mempool. Awaiting P2P Validator.",
+        "validation_id": validation_id
+    }), 200
+
+@app.route('/validator/get_task', methods=['GET'])
+def get_validation_task():
+    """Validator requests a pending PoUW task to judge"""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    
+    # Get the oldest pending validation
+    c.execute('SELECT * FROM pending_validations ORDER BY created_at ASC LIMIT 1')
+    task = c.fetchone()
+    conn.close()
+    
+    if not task:
+        return jsonify({"message": "No tasks available"}), 404
+        
+    return jsonify({
+        "validation_id": task['id'],
+        "wallet": task['wallet'],
+        "trajectory_hash": task['trajectory_hash'],
+        "reward": task['reward'],
+        "trajectory_log": json.loads(task['trajectory_log']),
+        "task_id": task['task_id']
+    }), 200
+
+@app.route('/validator/submit_verdict', methods=['POST'])
+def submit_verdict():
+    """Validator submits the verdict for a task. If valid, Bridge mints the reward for the Miner."""
+    data = request.json
+    trajectory_hash = data.get('trajectory_hash')
+    validator_wallet = data.get('validator_wallet')
+    is_valid = data.get('is_valid')
+    reason = data.get('reason', '')
+    
+    if not trajectory_hash or validator_wallet is None or is_valid is None:
+        return jsonify({"error": "Missing required data"}), 400
+        
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute('SELECT * FROM pending_validations WHERE trajectory_hash = ?', (trajectory_hash,))
+    task = c.fetchone()
+    
+    if not task:
+        conn.close()
+        return jsonify({"error": "Task not found in mempool"}), 404
+        
+    print(f"\n[Relayer] Received verdict from {validator_wallet} for trajectory {trajectory_hash}: {'VALID' if is_valid else 'INVALID'}")
+    
+    if not is_valid:
+        # Task is rejected by network. Delete from mempool.
+        c.execute('DELETE FROM pending_validations WHERE trajectory_hash = ?', (trajectory_hash,))
+        conn.commit()
+        conn.close()
+        print(f"[Relayer] Task rejected. Deleted from mempool.")
+        return jsonify({"status": "rejected", "message": "Verdict accepted (Invalid)."}), 200
+
+    # Task is VALID. Delete from mempool and MINT to MINER!
+    miner_wallet = task['wallet']
+    reward_amount = task['reward']
+    task_id = task['task_id']
+    
+    c.execute('DELETE FROM pending_validations WHERE trajectory_hash = ?', (trajectory_hash,))
+    conn.commit()
+    conn.close()
+    
+    print(f"[Relayer] Consensus Reached! Minting {reward_amount} ZYRA to Miner: {miner_wallet}")
     
     try:
         amount_wei = web3.to_wei(reward_amount, 'ether')
-        
-        # Build transaction
         nonce = web3.eth.get_transaction_count(admin_account.address)
         tx = zyra_contract.functions.mintReward(
-            web3.to_checksum_address(wallet_address),
+            web3.to_checksum_address(miner_wallet),
             amount_wei
         ).build_transaction({
             'chainId': CHAIN_ID,
@@ -152,45 +309,48 @@ def verify_pouw():
             'nonce': nonce,
         })
         
-        # Sign and broadcast
         signed_tx = web3.eth.account.sign_transaction(tx, private_key=ADMIN_PRIVATE_KEY)
         tx_hash = web3.eth.send_raw_transaction(signed_tx.raw_transaction)
         
-        # Wait for transaction to be mined
-        print(f"[Bridge] Waiting for transaction to be mined... ({tx_hash.hex()})")
+        print(f"[Relayer] Waiting for transaction to be mined... ({tx_hash.hex()})")
         receipt = web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
         
         if receipt.status != 1:
-            raise Exception("Transaction failed on the blockchain. Might be out of gas or Daily Mint Cap reached.")
+            raise Exception("Transaction failed on the blockchain.")
             
-        print(f"[Bridge] SUCCESS! Tx Hash: {tx_hash.hex()}")
+        print(f"[Relayer] SUCCESS! Tx Hash: {tx_hash.hex()}")
         
-        # Record successful task for rate limiting
-        user_task_history[wallet_address].append(now)
+        if task_id:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute('UPDATE tasks SET status = "completed", completed_by = ?, completed_at = ? WHERE id = ?',
+                      (miner_wallet, time.time(), task_id))
+            conn.commit()
+            conn.close()
+            
+        now = time.time()
+        if miner_wallet not in user_task_history:
+            user_task_history[miner_wallet] = []
+        user_task_history[miner_wallet].append(now)
         
-        # Append to recent tasks for Web UI
         recent_tasks.append({
-            "wallet": wallet_address,
+            "wallet": miner_wallet,
             "hash": tx_hash.hex(),
             "reward": reward_amount,
             "timestamp": int(now)
         })
-        # Keep only last 20 tasks
         if len(recent_tasks) > 20:
             recent_tasks.pop(0)
-        
+            
         return jsonify({
             "status": "success",
-            "message": f"Successfully minted {reward_amount} ZYRA for valid PoUW!",
+            "message": f"Successfully minted reward to {miner_wallet}!",
             "tx_hash": tx_hash.hex()
         }), 200
         
     except Exception as e:
-        print(f"[Bridge] Blockchain Error: {str(e)}")
-        return jsonify({
-            "error": str(e), 
-            "status": "validated_but_mint_failed"
-        }), 500
+        print(f"[Relayer] Blockchain Error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 import random
 import time
@@ -235,6 +395,8 @@ def get_price():
         "price_usd": round(current_price, 4),
         "change_24h": round(percent_change, 2)
     }), 200
+
+
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))

@@ -54,6 +54,26 @@ class Application:
                 
         self.main_window = MainWindow(self.hardware_info, self.logging_service.log_file, self.db_manager)
         
+        # Start P2P Node in background
+        self.logger.info("Starting P2P Gossip Node...")
+        import threading
+        import asyncio
+        from p2p.network import P2PNode
+        
+        # Use fixed port 5001 by default, or read from env
+        import os
+        p2p_port = int(os.environ.get("P2P_PORT", 5001))
+        self.p2p_node = P2PNode(port=p2p_port)
+        
+        def run_p2p():
+            asyncio.run(self.p2p_node.start())
+            
+        self.p2p_thread = threading.Thread(target=run_p2p, daemon=True)
+        self.p2p_thread.start()
+        
+        # Make p2p_node accessible to MainWindow/Workers
+        self.main_window.p2p_node = self.p2p_node
+        
     def run(self):
         """Runs the QApplication event loop."""
         self.main_window.show()

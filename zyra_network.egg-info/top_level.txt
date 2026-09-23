@@ -1,3 +1,4 @@
 ai
 app
+p2p
 zyra_cmd

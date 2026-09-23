@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zyra-network"
-version = "1.1.28"
-description = "ZYRA Developer CLI - Agentic AI + PoUW Mining"
+version = "2.1.2"
+description = "A powerful, self-organizing decentralized AI network client."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -20,7 +20,9 @@ dependencies = [
     "duckduckgo-search",
     "web3>=6.0.0",
     "python-dotenv",
-    "prompt_toolkit>=3.0.0"
+    "prompt_toolkit>=3.0.0",
+    "requests",
+    "websockets"
 ]
 
 [project.optional-dependencies]
@@ -38,6 +40,6 @@ testpaths = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["app*", "ai*", "zyra_cmd*"]
+include = ["app*", "ai*", "zyra_cmd*", "p2p*"]
 [project.scripts]
 zyra = "zyra_cmd.zyra_cli:main"

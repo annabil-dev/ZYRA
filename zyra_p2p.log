@@ -1,0 +1,15 @@
+2026-09-23 18:16:25,141 - [P2P] server listening on 0.0.0.0:5741
+2026-09-23 18:16:25,141 - [P2P] P2P Node started on ws://0.0.0.0:5741
+2026-09-23 18:16:27,169 - [P2P] Registered with Tracker. Found 1 peers.
+2026-09-23 18:16:27,174 - [P2P] Connected to peer: ws://192.168.1.16:5568
+2026-09-23 18:16:27,175 - [P2P] Received MEMPOOL_DATA sync
+2026-09-23 18:16:40,225 - [P2P] Initialized Local LLM Client. Endpoint: http://localhost:11434/v1, Model: llama3.1:8b
+2026-09-23 18:17:17,838 - [P2P] server listening on 0.0.0.0:5970
+2026-09-23 18:17:17,839 - [P2P] P2P Node started on ws://0.0.0.0:5970
+2026-09-23 18:17:19,861 - [P2P] Registered with Tracker. Found 2 peers.
+2026-09-23 18:17:19,866 - [P2P] Connected to peer: ws://192.168.1.16:5568
+2026-09-23 18:17:19,881 - [P2P] Received MEMPOOL_DATA sync
+2026-09-23 18:17:21,887 - [P2P] Could not connect to ws://192.168.1.16:5741: [WinError 1225] The remote computer refused the network connection
+2026-09-23 18:17:22,064 - [P2P] Initialized Local LLM Client. Endpoint: http://localhost:11434/v1, Model: llama3.1:8b
+2026-09-23 18:17:31,600 - [P2P] Executing tool: read_file_content with args: {'path': '/home/user/ipfs_history.txt'}
+2026-09-23 18:17:38,313 - [P2P] [IPFS] Successfully uploaded payload. CID: QmZqxTpyFjXKguEVs3sEcuNn6ijK2KiUq653J4sZACqXWS

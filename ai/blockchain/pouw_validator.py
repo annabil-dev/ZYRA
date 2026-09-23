@@ -2,6 +2,8 @@ import hashlib
 import json
 import time
 import math
+import requests
+import os
 
 class PoUWValidator:
     """
@@ -38,7 +40,7 @@ class PoUWValidator:
         return round(min(reward, 50.0), 6)
 
     @classmethod
-    def generate_proof(cls, task_type: str, prompt: str, tokens: int, metrics: dict, wallet_address: str) -> dict:
+    def generate_proof(cls, task_type: str, cid: str, tokens: int, metrics: dict, wallet_address: str) -> dict:
         """
         Generates a cryptographic proof of the work done.
         In a real P2P network, nodes would verify this proof against a model checkpoint.
@@ -57,6 +59,7 @@ class PoUWValidator:
         proof_payload = {
             "task_type": task_type,
             "wallet": wallet_address,
+            "cid": cid,
             "tokens": tokens,
             "metrics": metrics,
             "timestamp": timestamp,
@@ -70,3 +73,48 @@ class PoUWValidator:
         proof_payload["proof_hash"] = proof_hash
         
         return proof_payload
+
+    @classmethod
+    def evaluate_trajectory_with_llm(cls, trajectory_log: list, model_name: str = None) -> tuple[bool, str]:
+        """
+        Acts as the Local AI Smart Judge. Evaluates another miner's trajectory to ensure it is valid.
+        """
+        try:
+            log_text = ""
+            for step in trajectory_log:
+                role = step.get('role', 'unknown').upper()
+                content = step.get('content', '')
+                log_text += f"[{role}]: {content}\n"
+                
+            prompt = f"""You are an AI Judge evaluating a Proof of Useful Work (PoUW) submission for a decentralized network.
+Read the following agent execution trajectory.
+Did the agent successfully perform real, meaningful work and solve the task?
+Reply ONLY with a single word: "VALID" if they did, or "INVALID" if they faked it or failed.
+
+TRAJECTORY LOG:
+{log_text[-4000:]}"""
+            
+            judge_model = model_name or os.environ.get("JUDGE_MODEL", "qwen2.5-coder:7b")
+            
+            payload = {
+                "model": judge_model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {"temperature": 0.0}
+            }
+            
+            print(f"[\033[96mAI Validator Node\033[0m] Asking local model {judge_model} for verdict...")
+            
+            resp = requests.post("http://localhost:11434/api/generate", json=payload, timeout=60)
+            if resp.status_code == 200:
+                result = resp.json().get('response', '').strip().upper()
+                print(f"[\033[96mAI Validator Node\033[0m] Verdict result: \033[93m{result}\033[0m")
+                if "VALID" in result and "INVALID" not in result:
+                    return True, "Valid"
+                else:
+                    return False, "AI Judge ruled INVALID"
+            else:
+                return False, f"AI Judge API Error: {resp.status_code}"
+                
+        except Exception as e:
+            return False, f"AI Judge Exception: {e}"

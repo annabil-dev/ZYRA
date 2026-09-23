@@ -140,6 +140,19 @@ class MainWindow(QMainWindow):
         self.setup_hot_reload()
 
     def handle_pouw_mined(self, proof):
+        # Broadcast the PoUW trajectory to the P2P network
+        if hasattr(self, 'p2p_node'):
+            import uuid
+            traj_payload = {
+                "trajectory_hash": proof.get("hash", str(uuid.uuid4().hex)),
+                "wallet": proof.get("wallet", "Z_UNKNOWN"),
+                "reward": proof.get("reward", 0),
+                "metrics": proof.get("metrics", {}),
+                "timestamp": proof.get("timestamp", 0)
+            }
+            self.p2p_node.add_trajectory(traj_payload)
+            self.logger.info(f"Broadcasted Trajectory {traj_payload['trajectory_hash']} to P2P network.")
+            
         # Insert to ledger
         self.wallet_page.ledger.add_pouw_reward(proof['wallet'], proof['reward'], proof)
         # Update wallet UI

@@ -44,36 +44,53 @@ def check_and_install_ollama():
     # Ask to install
     print("\n\033[91m[System]\033[0m Ollama AI Engine is not installed on this system.")
     print("Ollama is required as the local engine for ZYRA CLI.")
-    ans = input("\033[96mDo you want ZYRA to automatically download and install Ollama for Windows? (Y/n): \033[0m").strip().lower()
+    ans = input("\033[96mDo you want ZYRA to automatically download and install Ollama? (Y/n): \033[0m").strip().lower()
     if ans == 'n':
         print("\033[93mInstallation cancelled. Exiting.\033[0m")
         sys.exit(1)
         
-    installer_url = "https://ollama.com/download/OllamaSetup.exe"
-    installer_path = os.path.join(os.environ.get("TEMP", "C:\\Temp"), "OllamaSetup.exe")
-    
-    print("\n\033[94m[System]\033[0m Downloading OllamaSetup.exe (this may take a few minutes)...")
-    try:
-        def report(count, block_size, total_size):
-            if total_size > 0:
-                percent = int(count * block_size * 100 / total_size)
-                sys.stdout.write(f"\r\033[96mDownloading... {percent}%\033[0m")
-                sys.stdout.flush()
-        urllib.request.urlretrieve(installer_url, installer_path, reporthook=report)
-        print("\n\033[92m[System]\033[0m Download complete!")
-    except Exception as e:
-        print(f"\n\033[91m[Error]\033[0m Failed to download: {e}")
+    if sys.platform.startswith("linux"):
+        print("\n\033[94m[System]\033[0m Installing Ollama for Linux (may require sudo password)...")
+        try:
+            process = subprocess.run("curl -fsSL https://ollama.com/install.sh | sh", shell=True)
+            if process.returncode != 0:
+                print(f"\033[91m[Error]\033[0m Linux installer failed with code {process.returncode}")
+                return False
+        except Exception as e:
+            print(f"\033[91m[Error]\033[0m Failed to run Linux installer: {e}")
+            return False
+            
+    elif sys.platform == "darwin":
+        print("\n\033[91m[System]\033[0m Auto-install is not supported on macOS yet. Please install manually from https://ollama.com/download")
         return False
         
-    print("\033[94m[System]\033[0m Installing Ollama (Please allow UAC prompt if it appears)...")
-    try:
-        process = subprocess.run([installer_path, "/SILENT"], capture_output=True, text=True)
-        if process.returncode != 0:
-            print(f"\033[91m[Error]\033[0m Installer failed with code {process.returncode}")
+    else:
+        # Windows Logic
+        installer_url = "https://ollama.com/download/OllamaSetup.exe"
+        installer_path = os.path.join(os.environ.get("TEMP", "C:\\Temp"), "OllamaSetup.exe")
+        
+        print("\n\033[94m[System]\033[0m Downloading OllamaSetup.exe (this may take a few minutes)...")
+        try:
+            def report(count, block_size, total_size):
+                if total_size > 0:
+                    percent = int(count * block_size * 100 / total_size)
+                    sys.stdout.write(f"\r\033[96mDownloading... {percent}%\033[0m")
+                    sys.stdout.flush()
+            urllib.request.urlretrieve(installer_url, installer_path, reporthook=report)
+            print("\n\033[92m[System]\033[0m Download complete!")
+        except Exception as e:
+            print(f"\n\033[91m[Error]\033[0m Failed to download: {e}")
             return False
-    except Exception as e:
-        print(f"\033[91m[Error]\033[0m Failed to run installer: {e}")
-        return False
+            
+        print("\033[94m[System]\033[0m Installing Ollama (Please allow UAC prompt if it appears)...")
+        try:
+            process = subprocess.run([installer_path, "/SILENT"], capture_output=True, text=True)
+            if process.returncode != 0:
+                print(f"\033[91m[Error]\033[0m Installer failed with code {process.returncode}")
+                return False
+        except Exception as e:
+            print(f"\033[91m[Error]\033[0m Failed to run installer: {e}")
+            return False
         
     print("\033[94m[System]\033[0m Waiting for Ollama engine to start...")
     for _ in range(15):
@@ -91,9 +108,12 @@ def check_and_pull_model(default_model):
         data = json.loads(req.read().decode('utf-8'))
         models = [m['name'] for m in data.get('models', [])]
         
-        # Exact match or matched tag
-        if any(m == default_model or m.startswith(default_model + ':') for m in models):
-            return default_model
+        if models:
+            # Exact match or matched tag
+            if any(m == default_model or m.startswith(default_model + ':') for m in models):
+                return default_model
+            # If default is not installed but others are, just use the first available one!
+            return models[0]
             
     except Exception as e:
         print(f"\033[91m[Error]\033[0m Failed to fetch models: {e}")
@@ -124,17 +144,9 @@ def check_and_pull_model(default_model):
         
     print(f"\n\033[94m[System]\033[0m Downloading {selected_model}... (This will take a while depending on your internet speed)")
     
-    # Run ollama pull and stream output
+    # Run ollama pull directly
     try:
-        process = subprocess.Popen(["ollama", "pull", selected_model], 
-                                   stdout=subprocess.PIPE, 
-                                   stderr=subprocess.STDOUT,
-                                   text=True,
-                                   bufsize=1)
-        for line in process.stdout:
-            sys.stdout.write("\033[96m" + line + "\033[0m")
-            sys.stdout.flush()
-        process.wait()
+        process = subprocess.run(["ollama", "pull", selected_model])
         
         if process.returncode == 0:
             print(f"\n\033[92m[System]\033[0m {selected_model} successfully downloaded!")

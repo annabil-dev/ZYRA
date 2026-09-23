@@ -263,6 +263,8 @@ app/workers/inference_worker.py
 app/workers/ollama_installer.py
 app/workers/tts_worker.py
 app/workers/voice_worker.py
+p2p/network.py
+p2p/protocol.py
 tests/test_attention.py
 tests/test_baseline_model.py
 tests/test_bpe.py

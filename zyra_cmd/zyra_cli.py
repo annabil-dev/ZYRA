@@ -18,12 +18,23 @@ if sys.platform == 'win32':
 # Add project root to sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import logging
+# Suppress annoying HTTP request logs from requests and urllib3
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("requests").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 from ai.inference.local_llm_client import LocalLLMGenerator
 from ai.blockchain.wallet import ZyraWallet
 from ai.blockchain.ledger import ZyraLedger
 from ai.blockchain.pouw_validator import PoUWValidator
+import dotenv
 
-BRIDGE_URL = os.environ.get("ZYRA_BRIDGE_URL", "https://kccmy-114-10-44-157.free.pinggy.net")
+# Load .env from current directory first (for users running zyra in their project dir)
+dotenv.load_dotenv(".env")
+# Fallback to package root
+dotenv.load_dotenv(str(Path(__file__).resolve().parent.parent / '.env'))
+
+BRIDGE_URL = os.environ.get("ZYRA_BRIDGE_URL", "http://127.0.0.1:5000") # Default to localhost instead of pinggy to prevent offline errors during development
 
 def print_animated(text):
     for char in text:
@@ -115,9 +126,24 @@ def process_prompt(llm, prompt, history, wallet, ledger, model_name):
     # --- PoUW MINING LOGIC ---
     print("\033[93m[PoUW Validator]\033[0m Submitting Proof of Useful Work...")
     
+    from app.utils.ipfs import upload_to_ipfs
+    import uuid
+    
+    trajectory_data = {
+        "prompt": prompt,
+        "response": final_text,
+        "history": history,
+        "wallet": wallet.address,
+        "timestamp": time.time()
+    }
+    
+    cid = upload_to_ipfs(trajectory_data)
+    if not cid:
+        cid = f"LOCAL_{uuid.uuid4().hex}"
+        
     proof = PoUWValidator.generate_proof(
         task_type="AGENT_EXECUTION" if is_tool_call else "TEXT_GEN",
-        prompt=prompt,
+        cid=cid,
         tokens=total_tokens,
         metrics={"latency_ms": latency_ms, "vram_mb": 0.0},
         wallet_address=wallet.address
@@ -126,12 +152,28 @@ def process_prompt(llm, prompt, history, wallet, ledger, model_name):
     reward = proof.get('reward', 0.0)
     if reward > 0:
         ledger.add_pouw_reward(wallet.address, reward, proof)
+        
+        # Broadcast the PoUW trajectory to the P2P network
+        global p2p_node
+        if 'p2p_node' in globals():
+            import uuid
+            traj_payload = {
+                "trajectory_hash": proof.get("proof_hash", str(uuid.uuid4().hex)),
+                "cid": cid,
+                "wallet": proof.get("wallet", "Z_UNKNOWN"),
+                "reward": proof.get("reward", 0),
+                "metrics": proof.get("metrics", {}),
+                "timestamp": proof.get("timestamp", 0)
+            }
+            p2p_node.add_trajectory(traj_payload)
+            print(f"\033[94m[P2P]\033[0m Broadcasted Trajectory to P2P network.")
+            
         print(f"\033[92m[SUCCESS]\033[0m You earned \033[1m+{reward:.4f} ZYRA\033[0m for this terminal task!\n")
     else:
         print("\033[91m[REJECTED]\033[0m Task did not qualify for PoUW rewards.\n")
 
 
-def run_automode(llm, initial_task: str, history: list, wallet: ZyraWallet, ledger: ZyraLedger, model_name: str, auto_yes: bool = False, planner_model: str = None, coder_model: str = None):
+def run_automode(llm, initial_task: str, history: list, wallet: ZyraWallet, ledger: ZyraLedger, model_name: str, auto_yes: bool = False, planner_model: str = None, coder_model: str = None, task_id: str = None):
     # Auto-detect specialist models if not provided
     if not planner_model or not coder_model:
         try:
@@ -175,19 +217,16 @@ RULES:
 You will receive instructions from the PLANNER.
 RULES:
 1. You are on Windows. DO NOT use Linux commands like `apt-get` or `bash`. Use PowerShell equivalents.
-2. IMPORTANT WINDOWS PATH RULE: When writing Python code, ALWAYS use raw strings for Windows paths (e.g. `r"C:\path"`) or forward slashes (e.g. `"C:/path"`) to avoid SyntaxWarning \\S escape sequence errors!
+2. CRITICAL RULE: If a file path contains spaces (like `D:\Semester 5`), you MUST wrap it in double quotes when running commands! Example: `python "D:\Semester 5\script.py"`
 3. To execute a command, output it exactly like this:
 <CMD>your command</CMD>
-4. If you need to CREATE or WRITE a Python script, you MUST create the file first using PowerShell inside a <CMD> tag. For example:
-<CMD>
-$code = @"
-print(r'D:\\Hello')
-"@
-Set-Content -Path "script.py" -Value $code
-</CMD>
-NEVER try to run `python script.py` before you have actually created it!
-5. You can output MULTIPLE <CMD> tags per turn to run commands sequentially.
-6. ANTI-LAZINESS POLICY: If the Planner asks you to VERIFY or CHECK a file/result, you MUST execute a command (like `Test-Path`, `cat`, or running a script) in the SAME turn. You CANNOT just output [STEP_COMPLETE] without providing terminal output proof.
+4. To CREATE or WRITE a file, DO NOT use terminal commands (like echo or Set-Content). You MUST use the WRITE_FILE tool exactly like this:
+<WRITE_FILE path="exact_path.py">
+import os
+print("hello")
+</WRITE_FILE>
+5. You can output MULTIPLE <CMD> and <WRITE_FILE> tags per turn to execute steps sequentially.
+6. ANTI-LAZINESS POLICY: If the Planner asks you to VERIFY or CHECK a file/result, you MUST execute a command (like `cat` or running a script) in the SAME turn to prove it works. You CANNOT just output [STEP_COMPLETE] without providing terminal output proof.
 7. When the delegated step is fully complete, output exactly:
 [STEP_COMPLETE]"""
     coder_history.append({"role": "user", "content": coder_sys})
@@ -296,71 +335,96 @@ NEVER try to run `python script.py` before you have actually created it!
             coder_history.append({"role": "assistant", "content": coder_output})
             full_trajectory_log.append({"role": "coder", "content": coder_output})
             
-            cmd_matches = re.findall(r"<CMD>(.*?)(?:</CMD>|$)", coder_output, re.DOTALL)
+            pattern = r"<(CMD|WRITE_FILE)(?:\s+path=\"([^\"]+)\")?>\n*(.*?)\n*(?:</\1>|$)"
+            actions = list(re.finditer(pattern, coder_output, re.DOTALL))
             
-            if cmd_matches:
+            if actions:
                 all_success = True
-                for command in cmd_matches:
-                    command = command.strip()
-                    if not command: continue
+                for match in actions:
+                    tag_name = match.group(1)
+                    file_path = match.group(2)
+                    content = match.group(3)
                     
-                    cmd_preview = command.replace('\n', ' ')
-                    cmd_preview = cmd_preview if len(cmd_preview) < 50 else cmd_preview[:50] + "..."
-                    print(f"\033[93m[Coder]\033[0m Executing: \033[96m{cmd_preview}\033[0m")
-                    is_dangerous = any(keyword in command.lower() for keyword in ["rm ", "del ", "rmdir ", "rd ", "format ", "drop ", "sudo ", ">", ">>"])
-                    
-                    if auto_yes and not is_dangerous:
-                        pass # Silent approval
-                    else:
-                        if is_dangerous and auto_yes:
-                            print(f"\033[91m[Security Warning]\033[0m Dangerous command. Bypass overridden.")
-                        choice = input(f"Allow execution? [Y/n]: ").strip().lower()
-                        if choice == 'n':
-                            print(f"\033[91m[Security]\033[0m Denied.\n")
-                            coder_history.append({"role": "user", "content": f"Command '{command}' denied by user."})
+                    if tag_name == "CMD":
+                        command = content.strip()
+                        if not command: continue
+                        
+                        cmd_preview = command.replace('\n', ' ')
+                        cmd_preview = cmd_preview if len(cmd_preview) < 50 else cmd_preview[:50] + "..."
+                        print(f"\033[93m[Coder]\033[0m Executing: \033[96m{cmd_preview}\033[0m")
+                        is_dangerous = any(keyword in command.lower() for keyword in ["rm ", "del ", "rmdir ", "rd ", "format ", "drop ", "sudo ", ">", ">>"])
+                        
+                        if auto_yes and not is_dangerous:
+                            pass # Silent approval
+                        else:
+                            if is_dangerous and auto_yes:
+                                print(f"\033[91m[Security Warning]\033[0m Dangerous command. Bypass overridden.")
+                            choice = input(f"Allow execution? [Y/n]: ").strip().lower()
+                            if choice == 'n':
+                                print(f"\033[91m[Security]\033[0m Denied.\n")
+                                coder_history.append({"role": "user", "content": f"Command '{command}' denied by user."})
+                                all_success = False
+                                break
+                                
+                        try:
+                            if os.name == 'nt':
+                                result = subprocess.run(["powershell", "-Command", command], capture_output=True, text=True, timeout=60)
+                            else:
+                                result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60)
+                            stdout = result.stdout.strip()
+                            stderr = result.stderr.strip()
+                            output_msg = ""
+                            if stdout: output_msg += f"STDOUT:\n{stdout}\n"
+                            if stderr: output_msg += f"STDERR:\n{stderr}\n"
+                            if not stdout and not stderr: output_msg = "Command executed successfully with no output."
+                            
+                            if result.returncode != 0:
+                                err_preview = stderr.replace('\n', ' ')
+                                err_preview = err_preview if len(err_preview) < 80 else err_preview[:80] + "..."
+                                print(f"\033[91m[Failed]\033[0m {err_preview}\n")
+                            else:
+                                print(f"\033[92m[Success]\033[0m Command executed.\n")
+                            
+                            if "No such file or directory" in stderr or "Cannot find path" in stderr:
+                                coder_history.append({"role": "user", "content": f"Command '{command}' failed:\n{stderr}\n\nSYSTEM WARNING: The file does not exist! Did you forget to write it using <WRITE_FILE> first?"})
+                            else:
+                                coder_history.append({"role": "user", "content": f"Command '{command}' output:\n{output_msg}"})
+                            
+                            if result.returncode != 0:
+                                all_success = False
+                                break
+                                
+                        except subprocess.TimeoutExpired as e:
+                            stdout_part = e.stdout.decode('utf-8') if isinstance(e.stdout, bytes) else (e.stdout or "")
+                            print(f"\033[91m[Timeout]\033[0m Command took longer than 60s.\n")
+                            coder_history.append({"role": "user", "content": f"Command timed out after 60s. Partial STDOUT:\n{stdout_part}"})
                             all_success = False
                             break
-                            
-                    print(f"\033[92m[System]\033[0m Executing...")
-                    try:
-                        if os.name == 'nt':
-                            result = subprocess.run(["powershell", "-Command", command], capture_output=True, text=True, timeout=60)
-                        else:
-                            result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60)
-                        stdout = result.stdout.strip()
-                        stderr = result.stderr.strip()
-                        output_msg = ""
-                        if stdout: output_msg += f"STDOUT:\n{stdout}\n"
-                        if stderr: output_msg += f"STDERR:\n{stderr}\n"
-                        if not stdout and not stderr: output_msg = "Command executed successfully with no output."
-                        
-                        if result.returncode != 0:
-                            err_preview = stderr.replace('\n', ' ')
-                            err_preview = err_preview if len(err_preview) < 80 else err_preview[:80] + "..."
-                            print(f"\033[91m[Failed]\033[0m {err_preview}\n")
-                        else:
-                            print(f"\033[92m[Success]\033[0m Command executed.\n")
-                        
-                        if "No such file or directory" in stderr:
-                            coder_history.append({"role": "user", "content": f"Command '{command}' failed:\n{stderr}\n\nSYSTEM WARNING: The file does not exist! You MUST create it first using `Set-Content` inside <CMD> tags. Stop trying to run a file that doesn't exist."})
-                        else:
-                            coder_history.append({"role": "user", "content": f"Command '{command}' output:\n{output_msg}"})
-                        
-                        if result.returncode != 0:
+                        except Exception as e:
+                            print(f"\033[91m[Error]\033[0m {str(e)}\n")
+                            coder_history.append({"role": "user", "content": f"Command failed: {str(e)}"})
                             all_success = False
-                            break # Stop executing further commands if one fails
-                            
-                    except subprocess.TimeoutExpired as e:
-                        stdout_part = e.stdout.decode('utf-8') if isinstance(e.stdout, bytes) else (e.stdout or "")
-                        print(f"\033[91m[Timeout]\033[0m Command took longer than 60s.\n")
-                        coder_history.append({"role": "user", "content": f"Command timed out after 60s. Partial STDOUT:\n{stdout_part}"})
-                        all_success = False
-                        break
-                    except Exception as e:
-                        print(f"\033[91m[Error]\033[0m {str(e)}\n")
-                        coder_history.append({"role": "user", "content": f"Command failed: {str(e)}"})
-                        all_success = False
-                        break
+                            break
+
+                    elif tag_name == "WRITE_FILE":
+                        if not file_path:
+                            coder_history.append({"role": "user", "content": "WRITE_FILE failed: You did not provide the path attribute. E.g. <WRITE_FILE path=\"script.py\">"})
+                            all_success = False
+                            break
+                        
+                        print(f"\033[93m[Coder]\033[0m Writing file: \033[96m{file_path}\033[0m")
+                        try:
+                            abs_path = os.path.abspath(file_path)
+                            os.makedirs(os.path.dirname(abs_path) or '.', exist_ok=True)
+                            with open(abs_path, 'w', encoding='utf-8') as f:
+                                f.write(content)
+                            print(f"\033[92m[Success]\033[0m File written.\n")
+                            coder_history.append({"role": "user", "content": f"Successfully wrote to {file_path}"})
+                        except Exception as e:
+                            print(f"\033[91m[Failed]\033[0m Could not write file: {e}\n")
+                            coder_history.append({"role": "user", "content": f"Failed to write file {file_path}: {e}"})
+                            all_success = False
+                            break
                 
                 # If they included [STEP_COMPLETE] in the same message, process it if commands succeeded
                 if "[STEP_COMPLETE]" in coder_output and all_success:
@@ -377,7 +441,7 @@ NEVER try to run `python script.py` before you have actually created it!
                 successful_delegations += 1
                 break
             else:
-                coder_history.append({"role": "user", "content": "Use <CMD> to execute or [STEP_COMPLETE] if done."})
+                coder_history.append({"role": "user", "content": "Use <CMD> or <WRITE_FILE> to take action, or [STEP_COMPLETE] if done."})
                 
         if not step_completed:
             planner_history.append({"role": "user", "content": "CODER REPORT: Coder reached max steps without completing the task."})
@@ -386,9 +450,24 @@ NEVER try to run `python script.py` before you have actually created it!
 
     # Reward for automode
     print("\033[93m[PoUW Validator]\033[0m Submitting Proof of Useful Work to ZYRA Bridge Server...")
+    
+    from app.utils.ipfs import upload_to_ipfs
+    import uuid
+    
+    trajectory_data = {
+        "prompt": initial_task,
+        "full_log": full_trajectory_log,
+        "wallet": wallet.address,
+        "timestamp": time.time()
+    }
+    
+    cid = upload_to_ipfs(trajectory_data)
+    if not cid:
+        cid = f"LOCAL_{uuid.uuid4().hex}"
+        
     proof = PoUWValidator.generate_proof(
         task_type="AGENT_EXECUTION",
-        prompt=initial_task,
+        cid=cid,
         tokens=total_tokens_automode,
         metrics={"latency_ms": 100, "vram_mb": 0.0},
         wallet_address=wallet.address
@@ -402,20 +481,22 @@ NEVER try to run `python script.py` before you have actually created it!
         
     tx_hash = "Unknown"
     try:
-        response = requests.post(f"{BRIDGE_URL}/verify_pouw", json={
+        response = requests.post(f"{BRIDGE_URL}/submit_pouw", json={
             "user_wallet": target_wallet,
             "trajectory_hash": proof.get('proof_hash', '0x0000'),
+            "task_id": task_id,
             "reward": reward,
-            "trajectory_log": full_trajectory_log
+            "trajectory_log": cid
         }, timeout=15)
         
         if response.status_code == 200:
             data = response.json()
-            tx_hash = data.get("tx_hash", "Unknown")
-            print(f"\033[92m[SUCCESS]\033[0m Task verified by Bridge! \033[1m+{reward:.4f} ZYRA\033[0m sent to wallet.")
-            print(f"Transaction Hash: \033[96m{tx_hash}\033[0m\n")
+            validation_id = data.get("validation_id", "Unknown")
+            print(f"\033[92m[SUCCESS]\033[0m Task submitted to Mempool! Status: \033[93mPending P2P Validation\033[0m")
+            print(f"Validation ID: \033[96m{validation_id}\033[0m")
+            print("Please wait for another ZYRA Node to judge your work. You can check the dashboard for updates.\n")
             
-            # Save local copy for /wallet history
+            # Save local copy for /wallet history (as pending for now)
             ledger.add_pouw_reward(target_wallet, reward, proof)
         elif response.status_code == 500 and response.json().get("status") == "validated_but_mint_failed":
             error_msg = response.json().get("error", "Unknown blockchain error")
@@ -460,6 +541,67 @@ try:
     from prompt_toolkit.styles import Style
     from prompt_toolkit.formatted_text import HTML
 
+    def run_validator_mode(wallet: ZyraWallet, model_name: str):
+        """
+        Continuous looping mode to act as a P2P Smart Judge.
+        Fetches pending tasks from the mempool and judges them locally.
+        """
+        print(f"\n\033[96m[AI Validator Node]\033[0m Starting P2P Smart Judge Mode...")
+        print(f"Validator Wallet: \033[92m{wallet.address}\033[0m")
+        print(f"Press \033[91mCtrl+C\033[0m to stop validating.\n")
+        
+        target_wallet = wallet.metamask_address if hasattr(wallet, 'metamask_address') and wallet.metamask_address else wallet.address
+        
+        try:
+            while True:
+                sys.stdout.write('\r\033[90mPolling for new tasks to validate...\033[0m')
+                sys.stdout.flush()
+                
+                try:
+                    # 1. Fetch pending task
+                    resp = requests.get(f"{BRIDGE_URL}/validator/get_task", timeout=10)
+                    if resp.status_code == 200:
+                        sys.stdout.write('\r\033[K') # Clear line
+                        task = resp.json()
+                        val_id = task['validation_id']
+                        miner = task['wallet']
+                        print(f"[\033[93mNEW TASK\033[0m] Found pending validation \033[96m{val_id[:8]}...\033[0m from Miner \033[95m{miner[:8]}...\033[0m")
+                        
+                        # 2. Evaluate locally
+                        is_valid, reason = PoUWValidator.evaluate_trajectory_with_llm(task['trajectory_log'], model_name)
+                        
+                        # 3. Submit verdict
+                        print(f"[\033[96mAI Validator Node\033[0m] Submitting Verdict to Bridge Server...")
+                        verdict_resp = requests.post(f"{BRIDGE_URL}/validator/submit_verdict", json={
+                            "validation_id": val_id,
+                            "validator_wallet": target_wallet,
+                            "is_valid": is_valid,
+                            "reason": reason
+                        }, timeout=30)
+                        
+                        if verdict_resp.status_code == 200:
+                            vdata = verdict_resp.json()
+                            if is_valid:
+                                print(f"[\033[92mSUCCESS\033[0m] Validation accepted! Bridge Mint Tx: {vdata.get('tx_hash', 'Unknown')}\n")
+                            else:
+                                print(f"[\033[91mREJECTED\033[0m] Task failed validation. Mempool cleared.\n")
+                        else:
+                            print(f"[\033[91mERROR\033[0m] Bridge rejected verdict submission: {verdict_resp.text}\n")
+                            
+                        # Brief pause before taking next task
+                        time.sleep(2)
+                    else:
+                        # No tasks, sleep longer
+                        time.sleep(5)
+                except requests.exceptions.RequestException as e:
+                    sys.stdout.write('\r\033[K')
+                    print(f"[\033[91mConnection Error\033[0m] Could not reach Bridge Server at {BRIDGE_URL}. Retrying in 10s...")
+                    time.sleep(10)
+                    
+        except KeyboardInterrupt:
+            sys.stdout.write('\r\033[K')
+            print(f"\n\033[93m[AI Validator Node]\033[0m Stopped by user.\n")
+
     class ZyraCommandCompleter(Completer):
         def __init__(self):
             self.commands = [
@@ -471,8 +613,13 @@ try:
                 ('/link', 'Hubungkan alamat MetaMask (/link <address>)'),
                 ('/claim', 'Tarik token ZYRA ke dompet Web3 (/claim <amount>)'),
                 ('/automode', 'Aktifkan Swarm AI Multi-Model (/automode <task>)'),
+                ('/judge', 'Run as P2P Validator Node'),
+                ('/mine', 'Auto-Mining tugas dari ZYRA Network'),
                 ('/models', 'Buka pengelola model lokal Ollama'),
                 ('/deploy', 'Auto-deploy Smart Contract ke Localhost'),
+                ('/logs', 'Lihat audit log dari tugas sebelumnya'),
+                ('/clear', 'Bersihkan layar terminal dan memori percakapan'),
+                ('/status', 'Alias untuk /sys (Cek Hardware)'),
                 ('exit', 'Tutup aplikasi ZYRA')
             ]
 
@@ -501,6 +648,8 @@ def main():
     parser.add_argument("--model", type=str, default="llama3.1:8b", help="Default Ollama model to use")
     parser.add_argument("--planner-model", type=str, default=None, help="Specific model for the Planner Agent")
     parser.add_argument("--coder-model", type=str, default=None, help="Specific model for the Coder Agent")
+    parser.add_argument("--tracker", type=str, default=os.environ.get("TRACKER_URL", "http://localhost:5000"), help="URL of the Tracker Server")
+    parser.add_argument("--seed-peer", type=str, default=None, help="Static IP of another node to bypass tracker (e.g. ws://192.168.1.10:5001)")
     args = parser.parse_args()
 
     print(f"\033[92m[ZYRA CLI]\033[0m Starting Local Agentic AI...")
@@ -511,6 +660,79 @@ def main():
     ledger = ZyraLedger(user_data_dir)
     
     print(f"Connected to Wallet: \033[96m{wallet.address}\033[0m")
+    
+    # Start P2P Node
+    print(f"\033[94m[P2P]\033[0m Starting Gossip Node...")
+    import threading
+    import asyncio
+    import random
+    from p2p.network import P2PNode
+    
+    p2p_port = random.randint(5001, 5999)
+    global p2p_node
+    p2p_node = P2PNode(port=p2p_port, tracker_url=args.tracker, seed_peer=args.seed_peer)
+    
+    def p2p_judge_worker(payload):
+        from app.utils.ipfs import fetch_from_ipfs
+        from ai.blockchain.pouw_validator import PoUWValidator
+        import threading
+        
+        def run_validation():
+            cid = payload.get("cid")
+            traj_hash = payload.get("trajectory_hash")
+            
+            if not cid:
+                return
+                
+            print(f"\n\033[93m[Smart Judge]\033[0m Validating incoming Trajectory from {payload.get('wallet')} (CID: {cid})")
+            
+            trajectory_data = fetch_from_ipfs(cid)
+            if not trajectory_data:
+                print(f"\033[91m[Smart Judge]\033[0m Failed to fetch CID {cid} from IPFS.")
+                return
+                
+            log_list = trajectory_data.get("full_log", [])
+            if not log_list:
+                log_list = trajectory_data.get("history", [])
+                log_list.append({"role": "assistant", "content": trajectory_data.get("response", "")})
+                
+            is_valid, verdict_text = PoUWValidator.evaluate_trajectory_with_llm(log_list, model_name="llama3.2:1b")
+            
+            print(f"\033[96m[Smart Judge Verdict]\033[0m {verdict_text} ({traj_hash})")
+            
+            if is_valid:
+                # Wallet needs sign_message, if not present we do a dummy sig
+                sig = wallet.sign_message(traj_hash) if hasattr(wallet, 'sign_message') else f"SIG_{wallet.address}_{traj_hash}"
+                sig_payload = {
+                    "trajectory_hash": traj_hash,
+                    "judge_wallet": wallet.address,
+                    "signature": sig,
+                    "verdict": "VALID"
+                }
+                p2p_node.add_signature(sig_payload)
+                
+                # Submit to Bridge Relayer for Minting
+                try:
+                    import requests
+                    bridge_url = args.tracker # The tracker is also the bridge server
+                    requests.post(f"{bridge_url}/validator/submit_verdict", json={
+                        "trajectory_hash": traj_hash,
+                        "validator_wallet": wallet.address,
+                        "is_valid": True,
+                        "reason": "Validated locally via IPFS"
+                    }, timeout=10)
+                except Exception as e:
+                    print(f"\033[91m[Smart Judge]\033[0m Failed to relay verdict to bridge: {e}")
+                
+        threading.Thread(target=run_validation, daemon=True).start()
+
+    p2p_node.on_trajectory_received = p2p_judge_worker
+    
+    def run_p2p():
+        asyncio.run(p2p_node.start())
+        
+    p2p_thread = threading.Thread(target=run_p2p, daemon=True)
+    p2p_thread.start()
     
     from zyra_cmd.installer import check_and_install_ollama, check_and_pull_model
     
@@ -550,11 +772,12 @@ def main():
 """ + "\033[0m"
         print(logo)
         print("\033[1m=================================================\033[0m")
-        print(f"\033[92m    Welcome to ZYRA Interactive CLI \033[90m(v{cli_version})\033[0m")
+        print(f"\033[92m    Welcome to ZYRA Interactive CLI \033[96mv{cli_version}\033[0m")
         print("\033[1m=================================================\033[0m")
         print("Type your commands below. Type \033[93m/help\033[0m for available commands, or \033[93mexit\033[0m to quit.\n")
         
         if PromptSession:
+            from prompt_toolkit.patch_stdout import patch_stdout
             session = PromptSession(completer=ZyraCommandCompleter(), style=zyra_style)
         else:
             session = None
@@ -563,7 +786,8 @@ def main():
         while True:
             try:
                 if session:
-                    user_input = session.prompt("ZYRA > ").strip()
+                    with patch_stdout():
+                        user_input = session.prompt("ZYRA > ").strip()
                 else:
                     user_input = input("\033[96mZYRA > \033[0m").strip()
                 if not user_input:
@@ -585,6 +809,7 @@ def main():
                     print("  \033[93m/automode\033[0m- Autonomous Coding Agent (e.g., /automode create a react app)")
                     print("  \033[93m/export\033[0m  - Save current chat history to a Markdown file")
                     print("  \033[93m/logs\033[0m    - Open the most recent PoUW Swarm Audit Log")
+                    print("  \033[93m/judge\033[0m   - Run as P2P Validator Node")
                     print("  \033[93m/link\033[0m    - Link your MetaMask address (e.g., /link 0x...)")
                     print("  \033[93m/claim\033[0m   - Claim ZYRA tokens to your linked MetaMask")
                     print("  \033[93mexit\033[0m     - Exit the CLI\n")
@@ -605,6 +830,9 @@ def main():
                                 print(f"File disimpan di: {latest_file}")
                     else:
                         print("\033[91m[Error]\033[0m Belum ada file log audit yang ditemukan. Jalankan /automode terlebih dahulu.\n")
+                    continue
+                elif cmd == '/judge':
+                    run_validator_mode(wallet, llm.model_name)
                     continue
                 elif cmd in ['/wallet', '/balance']:
                     balance = ledger.get_balance(wallet.address)
@@ -826,12 +1054,12 @@ def main():
                     if input().strip().lower() != 'n':
                         print("\n\033[1m[Fresh Model Recommendations]\033[0m")
                         print("  1. \033[96mdeepseek-r1:7b\033[0m  - [Reasoning] The new highly capable reasoning model")
-                        print("  2. \033[96mllama3.3:70b\033[0m    - [Heavy] The ultimate Llama (Requires 64GB+ RAM)")
+                        print("  2. \033[96mqwen2.5-coder:32b\033[0m- [Heavy] The ultimate Coder (Requires 24GB+ RAM)")
                         print("  3. \033[96mqwen2.5-coder:7b\033[0m - [Coding] The best small model for code generation")
                         print("  4. \033[96mphi4\033[0m             - [Balanced] Microsoft's latest compact but smart model")
                         print("  5. \033[95mCustom (Type your own model name from ollama.com)\033[0m")
                         
-                        choices = {'1': 'deepseek-r1:7b', '2': 'llama3.3', '3': 'qwen2.5-coder:7b', '4': 'phi4'}
+                        choices = {'1': 'deepseek-r1:7b', '2': 'qwen2.5-coder:32b', '3': 'qwen2.5-coder:7b', '4': 'phi4'}
                         ans = input("\n\033[93mEnter number (1-5): \033[0m").strip()
                         
                         target_model = None
@@ -843,11 +1071,7 @@ def main():
                         if target_model:
                             print(f"\n\033[94m[System]\033[0m Pulling {target_model} from Ollama registry...")
                             try:
-                                process = subprocess.Popen(["ollama", "pull", target_model], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-                                for line in process.stdout:
-                                    sys.stdout.write("\033[96m" + line + "\033[0m")
-                                    sys.stdout.flush()
-                                process.wait()
+                                process = subprocess.run(["ollama", "pull", target_model])
                                 if process.returncode == 0:
                                     print(f"\n\033[92m[System]\033[0m {target_model} successfully downloaded!\n")
                                 else:
@@ -858,6 +1082,33 @@ def main():
                             print("\033[91mInvalid choice.\033[0m\n")
                     else:
                         print()
+                    continue
+                elif cmd == '/mine':
+                    print("\n\033[93m[Miner]\033[0m Starting ZYRA Auto-Miner...")
+                    print("\033[96m[System]\033[0m Polling network for new tasks (Press Ctrl+C to stop)...\n")
+                    target_wallet = wallet.metamask_address if hasattr(wallet, 'metamask_address') and wallet.metamask_address else wallet.address
+                    if not target_wallet: target_wallet = wallet.address
+                    
+                    try:
+                        import time
+                        while True:
+                            try:
+                                resp = requests.get(f"{BRIDGE_URL}/miner/get_task", params={"wallet": target_wallet}, timeout=5)
+                                if resp.status_code == 200:
+                                    task_data = resp.json()
+                                    task_id = task_data.get("task_id")
+                                    prompt = task_data.get("prompt")
+                                    reward = task_data.get("reward")
+                                    print(f"\n\033[92m[Network]\033[0m Found Task! Reward: {reward} ZYRA")
+                                    run_automode(llm, prompt, history, wallet, ledger, llm.model_name, auto_yes=True, planner_model=args.planner_model, coder_model=args.coder_model, task_id=task_id)
+                                    print("\n\033[96m[System]\033[0m Polling network for next task...\n")
+                                else:
+                                    time.sleep(10) # Wait 10 seconds before polling again
+                            except requests.exceptions.RequestException:
+                                print(f"\033[91m[Error]\033[0m Cannot connect to Bridge Server. Retrying in 10s...")
+                                time.sleep(10)
+                    except KeyboardInterrupt:
+                        print("\n\033[93m[Miner]\033[0m Auto-Miner stopped.\033[0m\n")
                     continue
                 
                 # If not a slash command, process as AI prompt

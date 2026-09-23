@@ -1,0 +1,242 @@
+import asyncio
+import websockets
+import json
+import logging
+import time
+import requests
+import uuid
+import socket
+
+from p2p.protocol import MessageType, create_message, parse_message
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - [P2P] %(message)s')
+
+class P2PNode:
+    def __init__(self, host='0.0.0.0', port=5001, tracker_url='http://localhost:5000', seed_peer=None):
+        self.host = host
+        self.port = port
+        self.tracker_url = tracker_url
+        self.node_id = str(uuid.uuid4())
+        
+        self.peers = set() # Set of websocket connections
+        self.peer_addresses = set() # Set of "ws://ip:port"
+        
+        if seed_peer:
+            self.peer_addresses.add(seed_peer)
+            
+        # Local Mempool
+        self.tasks = {} # task_id -> task_data
+        self.trajectories = {} # trajectory_hash -> trajectory_data
+        self.signatures = {} # trajectory_hash -> [signatures]
+        
+        # Keep track of seen message IDs to prevent infinite gossip loops
+        self.seen_messages = set()
+        
+        self.on_trajectory_received = None # Callback function
+        
+    async def start(self):
+        self.loop = asyncio.get_running_loop()
+        
+        # 1. Start the server to listen for incoming peer connections
+        server = await websockets.serve(self.handle_client, self.host, self.port)
+        logging.info(f"P2P Node started on ws://{self.host}:{self.port}")
+        
+        # 2. Register with Bootstrap Tracker to get other peers
+        self.register_with_tracker()
+        
+        # 3. Connect to known peers
+        await self.connect_to_peers()
+        
+        # 4. Keep alive / Sync loop
+        asyncio.create_task(self.sync_loop())
+        
+        await asyncio.Future()  # run forever
+
+    def get_public_ip(self):
+        # Simple way to get local IP for MVP
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(('10.255.255.255', 1))
+            ip = s.getsockname()[0]
+        except Exception:
+            ip = '127.0.0.1'
+        finally:
+            s.close()
+        return ip
+
+    def register_with_tracker(self):
+        try:
+            ip = self.get_public_ip()
+            ws_url = f"ws://{ip}:{self.port}"
+            res = requests.post(f"{self.tracker_url}/register_peer", json={"ws_url": ws_url}, timeout=2)
+            if res.status_code == 200:
+                peers = res.json().get("peers", [])
+                for p in peers:
+                    if p != ws_url:
+                        self.peer_addresses.add(p)
+                logging.info(f"Registered with Tracker. Found {len(self.peer_addresses)} peers.")
+        except Exception as e:
+            logging.warning(f"Failed to register with Tracker: {e}. Will run in isolated mode.")
+
+    async def connect_to_peers(self):
+        for addr in list(self.peer_addresses):
+            asyncio.create_task(self.connect_to_peer(addr))
+
+    async def connect_to_peer(self, uri):
+        try:
+            websocket = await websockets.connect(uri)
+            self.peers.add(websocket)
+            logging.info(f"Connected to peer: {uri}")
+            
+            # Request mempool sync
+            await websocket.send(create_message(MessageType.SYNC_MEMPOOL))
+            
+            # Listen to this peer
+            await self.listen_to_peer(websocket)
+        except Exception as e:
+            logging.error(f"Could not connect to {uri}: {e}")
+            self.peer_addresses.discard(uri)
+
+    async def handle_client(self, websocket, *args, **kwargs):
+        # Someone connected to us
+        self.peers.add(websocket)
+        remote_ip = websocket.remote_address[0]
+        logging.info(f"New incoming connection from {remote_ip}")
+        try:
+            await self.listen_to_peer(websocket)
+        finally:
+            self.peers.discard(websocket)
+
+    async def listen_to_peer(self, websocket):
+        try:
+            async for message_str in websocket:
+                msg = parse_message(message_str)
+                if not msg: continue
+                
+                # Deduplication to avoid infinite gossip loops
+                msg_hash = hash(message_str)
+                if msg_hash in self.seen_messages:
+                    continue
+                self.seen_messages.add(msg_hash)
+                
+                await self.handle_message(msg, websocket, message_str)
+        except websockets.exceptions.ConnectionClosed:
+            logging.info("Peer connection closed.")
+        finally:
+            if websocket in self.peers:
+                self.peers.discard(websocket)
+
+    async def handle_message(self, msg, websocket, raw_msg_str):
+        msg_type = msg.get("type")
+        payload = msg.get("payload")
+        
+        if msg_type == MessageType.NEW_TASK:
+            task_id = payload.get("task_id")
+            if task_id not in self.tasks:
+                logging.info(f"Received NEW_TASK: {task_id}")
+                self.tasks[task_id] = payload
+                await self.broadcast(raw_msg_str, exclude=websocket)
+                
+        elif msg_type == MessageType.NEW_TRAJECTORY:
+            traj_hash = payload.get("trajectory_hash")
+            if traj_hash not in self.trajectories:
+                logging.info(f"Received NEW_TRAJECTORY: {traj_hash}")
+                self.trajectories[traj_hash] = payload
+                if self.on_trajectory_received:
+                    # Fire callback in a separate task or directly
+                    self.on_trajectory_received(payload)
+                await self.broadcast(raw_msg_str, exclude=websocket)
+                
+        elif msg_type == MessageType.VALIDATION_SIGNATURE:
+            traj_hash = payload.get("trajectory_hash")
+            sig = payload.get("signature")
+            if traj_hash not in self.signatures:
+                self.signatures[traj_hash] = []
+            if sig not in self.signatures[traj_hash]:
+                logging.info(f"Received VALIDATION_SIGNATURE for {traj_hash}")
+                self.signatures[traj_hash].append(sig)
+                await self.broadcast(raw_msg_str, exclude=websocket)
+                
+        elif msg_type == MessageType.SYNC_MEMPOOL:
+            # Send our current state
+            sync_data = {
+                "tasks": self.tasks,
+                "trajectories": self.trajectories,
+                "signatures": self.signatures
+            }
+            await websocket.send(create_message(MessageType.MEMPOOL_DATA, sync_data))
+            
+        elif msg_type == MessageType.MEMPOOL_DATA:
+            logging.info("Received MEMPOOL_DATA sync")
+            self.tasks.update(payload.get("tasks", {}))
+            self.trajectories.update(payload.get("trajectories", {}))
+            # Merge signatures
+            for t_hash, sigs in payload.get("signatures", {}).items():
+                if t_hash not in self.signatures:
+                    self.signatures[t_hash] = []
+                for s in sigs:
+                    if s not in self.signatures[t_hash]:
+                        self.signatures[t_hash].append(s)
+
+    async def broadcast(self, raw_msg_str, exclude=None):
+        """Gossip Protocol: Send message to all connected peers"""
+        if not self.peers:
+            return
+            
+        # Register in seen to avoid echoing back
+        self.seen_messages.add(hash(raw_msg_str))
+        
+        disconnected = set()
+        for peer in self.peers:
+            if peer == exclude:
+                continue
+            try:
+                await peer.send(raw_msg_str)
+            except Exception:
+                disconnected.add(peer)
+                
+        for peer in disconnected:
+            self.peers.remove(peer)
+
+    # --- Public API for Local Node ---
+    def _run_coroutine(self, coro):
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.create_task(coro)
+        except RuntimeError:
+            # We are not in an event loop, or in a different thread
+            # Use the saved loop
+            if hasattr(self, 'loop') and self.loop:
+                asyncio.run_coroutine_threadsafe(coro, self.loop)
+            else:
+                logging.warning("Cannot broadcast message, no event loop running.")
+
+    def add_task(self, task_payload):
+        task_id = task_payload["task_id"]
+        self.tasks[task_id] = task_payload
+        msg = create_message(MessageType.NEW_TASK, task_payload)
+        self._run_coroutine(self.broadcast(msg))
+
+    def add_trajectory(self, traj_payload):
+        t_hash = traj_payload["trajectory_hash"]
+        self.trajectories[t_hash] = traj_payload
+        msg = create_message(MessageType.NEW_TRAJECTORY, traj_payload)
+        self._run_coroutine(self.broadcast(msg))
+        
+    def add_signature(self, sig_payload):
+        t_hash = sig_payload["trajectory_hash"]
+        if t_hash not in self.signatures:
+            self.signatures[t_hash] = []
+        self.signatures[t_hash].append(sig_payload["signature"])
+        msg = create_message(MessageType.VALIDATION_SIGNATURE, sig_payload)
+        self._run_coroutine(self.broadcast(msg))
+
+    async def sync_loop(self):
+        # Periodically clean up old messages, check tracker for new peers, etc.
+        while True:
+            await asyncio.sleep(60)
+            self.seen_messages.clear() # Prevent memory leak
+
+if __name__ == "__main__":
+    node = P2PNode(port=5001)
+    asyncio.run(node.start())

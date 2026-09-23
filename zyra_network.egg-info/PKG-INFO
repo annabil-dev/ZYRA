@@ -1,7 +1,7 @@
 Metadata-Version: 2.4
 Name: zyra-network
-Version: 1.1.27
-Summary: ZYRA Developer CLI - Agentic AI + PoUW Mining
+Version: 2.1.2
+Summary: A powerful, self-organizing decentralized AI network client.
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
 Requires-Dist: PySide6>=6.5.0
@@ -16,6 +16,8 @@ Requires-Dist: duckduckgo-search
 Requires-Dist: web3>=6.0.0
 Requires-Dist: python-dotenv
 Requires-Dist: prompt_toolkit>=3.0.0
+Requires-Dist: requests
+Requires-Dist: websockets
 Provides-Extra: dev
 Requires-Dist: pytest; extra == "dev"
 Requires-Dist: pyinstaller; extra == "dev"
