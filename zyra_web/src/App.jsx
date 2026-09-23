@@ -19,7 +19,7 @@ const LandingView = ({ setView, showToast, zyraBalance }) => {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const res = await fetch("http://localhost:5000/api/network_stats");
+        const res = await fetch("/api/network_stats");
         if (res.ok) {
           const data = await res.json();
           setNetworkStats(data);
@@ -35,7 +35,7 @@ const LandingView = ({ setView, showToast, zyraBalance }) => {
     let lastKnownHash = null;
     const fetchTasks = async () => {
       try {
-        const res = await fetch("http://localhost:5000/live_tasks");
+        const res = await fetch("/live_tasks");
         if (!res.ok) return;
         const data = await res.json();
         const tasks = data.tasks;
