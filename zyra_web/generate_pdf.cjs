@@ -10,16 +10,21 @@ const path = require('path');
   const filePath = `file://${path.resolve(__dirname, 'whitepaper_source.html')}`;
   console.log(`Navigating to ${filePath}...`);
   
-  await page.goto(filePath, {waitUntil: 'networkidle0'});
+  try {
+    await page.goto(filePath, {waitUntil: 'networkidle2', timeout: 15000});
+  } catch (e) {
+    console.log('Navigation timeout hit, proceeding to PDF generation anyway...');
+  }
   
-  // Give it a tiny bit of time to settle fonts
-  await new Promise(r => setTimeout(r, 1000));
+  // Give it a bit of time to settle fonts
+  await new Promise(r => setTimeout(r, 2000));
   
   console.log('Generating PDF...');
   await page.pdf({
     path: 'public/zyra_whitepaper_v2.0.pdf',
     format: 'A4',
     printBackground: true,
+    timeout: 0,
     margin: { top: '0', right: '0', bottom: '0', left: '0' }
   });
   
