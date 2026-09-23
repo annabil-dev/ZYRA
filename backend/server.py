@@ -396,7 +396,22 @@ def get_price():
         "change_24h": round(percent_change, 2)
     }), 200
 
+@app.route('/api/mempool', methods=['GET'])
+def api_mempool():
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute('SELECT wallet, trajectory_hash, reward, created_at FROM pending_validations ORDER BY created_at DESC LIMIT 20')
+        rows = c.fetchall()
+        conn.close()
+        return jsonify([dict(r) for r in rows])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
+@app.route('/live_tasks', methods=['GET'])
+def get_live_tasks():
+    return jsonify({"tasks": recent_tasks}), 200
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
