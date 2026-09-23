@@ -134,11 +134,11 @@ const LandingView = ({ setView, showToast, zyraBalance }) => {
           <p>Total ZYRA Mined (Live)</p>
         </div>
         <div className="stat-card">
-          <h3>{networkStats.activeNodes}</h3>
+          <h3>{networkStats.active_nodes || '...'}</h3>
           <p>Active Swarm Nodes (Testnet)</p>
         </div>
         <div className="stat-card">
-          <h3>{networkStats.mempoolSize} Tasks</h3>
+          <h3>{networkStats.mempool_size || '0'} Tasks</h3>
           <p>Pending in Mempool</p>
         </div>
       </section>
