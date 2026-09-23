@@ -6,7 +6,8 @@ const LandingView = ({ setView, showToast, zyraBalance }) => {
   const [displayedLines, setDisplayedLines] = useState([
     <><span className="t-prefix">ZYRA &gt;</span> <span className="t-user">Listening to network activity...</span></>
   ]);
-  
+  const [networkStats, setNetworkStats] = useState({ activeNodes: '...', mempoolSize: '0' });
+
   // Smooth scroll function
   const scrollToSection = (id) => {
     const element = document.getElementById(id);
@@ -14,6 +15,21 @@ const LandingView = ({ setView, showToast, zyraBalance }) => {
       element.scrollIntoView({ behavior: 'smooth' });
     }
   };
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const res = await fetch("http://localhost:5000/api/network_stats");
+        if (res.ok) {
+          const data = await res.json();
+          setNetworkStats(data);
+        }
+      } catch (err) {}
+    };
+    fetchStats();
+    const interval = setInterval(fetchStats, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     let lastKnownHash = null;
@@ -118,12 +134,12 @@ const LandingView = ({ setView, showToast, zyraBalance }) => {
           <p>Total ZYRA Mined (Live)</p>
         </div>
         <div className="stat-card">
-          <h3>1,492</h3>
+          <h3>{networkStats.activeNodes}</h3>
           <p>Active Swarm Nodes (Testnet)</p>
         </div>
         <div className="stat-card">
-          <h3>~5s</h3>
-          <p>Celo Consensus Finality</p>
+          <h3>{networkStats.mempoolSize} Tasks</h3>
+          <p>Pending in Mempool</p>
         </div>
       </section>
 

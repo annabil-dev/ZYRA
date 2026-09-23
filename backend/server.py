@@ -410,6 +410,20 @@ def api_mempool():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/network_stats', methods=['GET'])
+def network_stats():
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute('SELECT COUNT(*) FROM pending_validations')
+        mempool_size = c.fetchone()[0]
+        conn.close()
+        return jsonify({
+            "active_nodes": len(registered_peers) + 1,  # +1 for the tracker itself
+            "mempool_size": mempool_size
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
