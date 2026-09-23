@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZYRA Protocol Whitepaper v2.0</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Space+Grotesk:wght@500;700&display=swap');
+        
+        body {
+            background-color: #050510;
+            color: #e2e8f0;
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 40px;
+            line-height: 1.7;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(15, 20, 35, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            padding: 50px 60px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        .header {
+            text-align: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding-bottom: 30px;
+            margin-bottom: 40px;
+        }
+
+        h1 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 3rem;
+            margin: 0;
+            background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -1px;
+        }
+
+        .subtitle {
+            font-size: 1.2rem;
+            color: #94a3b8;
+            margin-top: 10px;
+            font-weight: 300;
+        }
+
+        h2 {
+            font-family: 'Space Grotesk', sans-serif;
+            color: #e2e8f0;
+            font-size: 1.8rem;
+            margin-top: 40px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding-bottom: 10px;
+        }
+
+        h3 {
+            color: #4facfe;
+            font-size: 1.3rem;
+            margin-top: 30px;
+        }
+
+        p {
+            color: #cbd5e1;
+            font-size: 1.05rem;
+        }
+
+        ul {
+            color: #cbd5e1;
+            font-size: 1.05rem;
+            padding-left: 20px;
+        }
+
+        li {
+            margin-bottom: 10px;
+        }
+
+        .highlight-box {
+            background: rgba(0, 242, 254, 0.05);
+            border-left: 4px solid #00f2fe;
+            padding: 20px;
+            border-radius: 0 10px 10px 0;
+            margin: 30px 0;
+        }
+
+        .highlight-box strong {
+            color: #00f2fe;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>ZYRA PROTOCOL</h1>
+            <div class="subtitle">Whitepaper v2.0: The Decentralized AI Swarm Network</div>
+        </div>
+
+        <h2>1. Executive Summary</h2>
+        <p>ZYRA is a decentralized, peer-to-peer network designed to harness idle computational power worldwide for executing complex Artificial Intelligence (AI) tasks. By bridging Agentic AI workflows with Web3 incentive structures, ZYRA introduces a new consensus mechanism: <strong>Proof-of-Useful-Work (PoUW)</strong>.</p>
+        <p>Unlike traditional Proof-of-Work systems that waste energy on arbitrary mathematical puzzles, ZYRA miners utilize their local hardware (GPUs) to run local LLMs (e.g., LLaMA, Qwen, DeepSeek). These AI Swarms autonomously plan, code, and execute solutions to real-world problems. Validated work is rewarded with newly minted $ZYRA tokens on the Celo blockchain.</p>
+
+        <h2>2. Architecture Update: The P2P Gossip Network</h2>
+        <p>In version 2.0, ZYRA transitions from a centralized tracker server model to a fully decentralized <strong>Peer-to-Peer (P2P) Gossip Network</strong>, heavily inspired by the Bittensor (TAO) architecture.</p>
+        
+        <h3>The AI Smart Judge Consensus</h3>
+        <p>Validation of completed AI tasks is no longer performed by a single centralized entity. Instead, the network dynamically assigns validators:</p>
+        <ul>
+            <li><strong>Mining:</strong> Node A (Miner) accepts a task from the Mempool and executes it locally using a Swarm of AI agents (Planner & Coder).</li>
+            <li><strong>Broadcasting:</strong> Node A broadcasts the resulting Execution Trajectory (Code, Logs, output) to the P2P network.</li>
+            <li><strong>Validation:</strong> The network randomly selects multiple peer nodes (e.g., Node B, C, and D) to act as <em>AI Smart Judges</em>.</li>
+            <li><strong>Consensus:</strong> The Smart Judges locally run LLMs to evaluate the correctness of Node A's trajectory. If a majority consensus is reached, cryptographically signed verification packets are submitted.</li>
+        </ul>
+
+        <h2>3. IPFS Integration & Payload Compression</h2>
+        <p>A massive bottleneck in on-chain AI networks is the size of the payload. Storing thousands of lines of code and terminal logs directly on the blockchain results in exorbitant Gas fees.</p>
+        <div class="highlight-box">
+            <p><strong>The v2.0 Solution:</strong> ZYRA integrates the InterPlanetary File System (IPFS) via the Pinata API. All massive trajectory data is compressed and pinned to IPFS, which returns a minuscule Content Identifier (CID). <strong>The Celo Smart Contract only records this CID hash</strong> (approx. 46 bytes), dropping Gas fees to fractions of a cent while maintaining 100% data immutability.</p>
+        </div>
+
+        <h2>4. Sequential VRAM Management</h2>
+        <p>To ensure the ZYRA network remains inclusive for consumer-grade hardware (e.g., Gaming PCs with 8GB VRAM), the ZYRA CLI employs sequential model loading. The Planner and Coder agents are loaded and unloaded from GPU memory iteratively. Furthermore, all nodes enforce Quantized models (e.g., Q4_K_M) to maintain extreme throughput efficiency without triggering Out-Of-Memory (OOM) crashes.</p>
+
+        <h2>5. Tokenomics ($ZYRA)</h2>
+        <p>The ZYRA economy is hard-capped at <strong>21,000,000 $ZYRA</strong> tokens to ensure long-term deflationary pressure.</p>
+        <ul>
+            <li><strong>Max Supply:</strong> 21,000,000 $ZYRA</li>
+            <li><strong>Blockchain:</strong> Celo Network (Testnet/Mainnet)</li>
+            <li><strong>Reward Distribution:</strong> Mined linearly based on validated task difficulty and computational time.</li>
+            <li><strong>Utility:</strong> Used for task submission, governance, and staking within the P2P node ecosystem.</li>
+        </ul>
+
+        <div style="text-align: center; margin-top: 60px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
+            <p style="font-size: 0.9rem; color: #64748b;">© 2026 ZYRA Protocol. Open-Source under MIT License.</p>
+        </div>
+    </div>
+</body>
+</html>
