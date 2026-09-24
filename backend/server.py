@@ -497,10 +497,14 @@ if __name__ == '__main__':
         
         try:
             async for message in websocket:
+                # Debug print
+                print(f"[WS Relay] Received msg from {node_id}: {message[:100]}...")
+                
                 # Relay this message to ALL other connected nodes
                 with relay_lock:
                     targets = [ws for ws in relay_clients if ws != websocket]
                 
+                print(f"[WS Relay] Broadcasting to {len(targets)} other peers.")
                 disconnected = []
                 for target in targets:
                     try:

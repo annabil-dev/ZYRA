@@ -179,9 +179,17 @@ class P2PNode:
                 self.peers.discard(websocket)
 
     async def handle_message(self, msg, websocket, raw_msg_str):
+        msg_hash = hash(raw_msg_str)
+        if msg_hash in self.seen_messages:
+            return
+        self.seen_messages.add(msg_hash)
+        
         msg_type = msg.get("type")
         payload = msg.get("payload")
         
+        if msg_type != MessageType.FILE_CHUNK:
+            print(f"[\033[93mDEBUG P2P\033[0m] Handled msg_type: {msg_type}")
+            
         if msg_type == MessageType.NEW_TASK:
             task_id = payload.get("task_id")
             if task_id not in self.tasks:
@@ -237,6 +245,7 @@ class P2PNode:
             
         elif msg_type == MessageType.FILE_REQUEST:
             cid = payload.get("cid")
+            print(f"[\033[93mDEBUG P2P\033[0m] FILE_REQUEST received for {cid}. My hosted files: {list(self.hosted_files.keys())}")
             if cid in self.hosted_files:
                 print(f"[\033[96mP2P Node\033[0m] Found requested file {cid}. Starting upload...")
                 asyncio.create_task(self.send_file_chunks(cid, websocket))

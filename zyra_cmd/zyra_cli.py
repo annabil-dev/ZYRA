@@ -728,7 +728,7 @@ def main():
     parser.add_argument("--model", type=str, default="llama3.1:8b", help="Default Ollama model to use")
     parser.add_argument("--planner-model", type=str, default=None, help="Specific model for the Planner Agent")
     parser.add_argument("--coder-model", type=str, default=None, help="Specific model for the Coder Agent")
-    parser.add_argument("--tracker", type=str, default=os.environ.get("TRACKER_URL", "http://localhost:5000"), help="URL of the Tracker Server")
+    parser.add_argument("--tracker", type=str, default=os.environ.get("TRACKER_URL", BRIDGE_URL), help="URL of the Tracker Server")
     parser.add_argument("--seed-peer", type=str, default=None, help="Static IP of another node to bypass tracker (e.g. ws://192.168.1.10:5001)")
     args = parser.parse_args()
 
