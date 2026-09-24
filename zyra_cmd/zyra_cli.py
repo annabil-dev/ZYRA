@@ -559,10 +559,8 @@ print("hello")
             
             # Save local copy for /wallet history (as pending for now)
             ledger.add_pouw_reward(target_wallet, reward, proof)
-            
             print("\n\033[93m[System]\033[0m Waiting for validation result from network before taking new tasks...")
             try:
-                import time
                 start_wait = time.time()
                 while time.time() - start_wait < 180:
                     status_resp = requests.get(f"{BRIDGE_URL}/validation_status/{validation_id}", timeout=5)
