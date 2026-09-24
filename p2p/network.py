@@ -238,10 +238,9 @@ class P2PNode:
         elif msg_type == MessageType.FILE_REQUEST:
             cid = payload.get("cid")
             if cid in self.hosted_files:
-                # We have the file, send it back directly to the requester
+                print(f"[\033[96mP2P Node\033[0m] Found requested file {cid}. Starting upload...")
                 asyncio.create_task(self.send_file_chunks(cid, websocket))
             else:
-                # We don't have it, act as Relay and forward the request
                 await self.broadcast(raw_msg_str, exclude=websocket)
                 
         elif msg_type == MessageType.FILE_CHUNK:
@@ -253,17 +252,18 @@ class P2PNode:
                 dl = self.downloading_files[cid]
                 if chunk_index == -1:
                     # EOF - Reconstruct file
+                    print(f"[\033[92mP2P Node\033[0m] Received EOF for {cid}. Assembling file...")
                     import base64
                     try:
                         with open(dl["path"], 'wb') as f:
                             for i in sorted(dl["chunks"].keys()):
                                 f.write(base64.b64decode(dl["chunks"][i]))
-                        logging.info(f"File {cid} assembled successfully at {dl['path']}.")
+                        print(f"[\033[92mSUCCESS\033[0m] File {cid} assembled successfully.")
                         if cid in self.file_transfer_callbacks:
                             if not self.file_transfer_callbacks[cid].done():
                                 self.file_transfer_callbacks[cid].set_result(True)
                     except Exception as e:
-                        logging.error(f"Failed to assemble file {cid}: {e}")
+                        print(f"[\033[91mERROR\033[0m] Failed to assemble file {cid}: {e}")
                 else:
                     dl["chunks"][chunk_index] = data
             else:
@@ -320,7 +320,7 @@ class P2PNode:
         filepath = self.hosted_files.get(cid)
         if not filepath: return
         
-        logging.info(f"Sending chunks for {cid} to requester.")
+        print(f"[\033[96mP2P Node\033[0m] Sending file chunks for {cid} to Relay...")
         try:
             import base64
             with open(filepath, 'rb') as f:
