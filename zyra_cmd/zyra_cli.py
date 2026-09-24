@@ -994,7 +994,10 @@ def main():
                     with open(env_file, "w") as f:
                         if model: f.write(f"PLANNER_MODEL={model}\n")
                         if addr: f.write(f"WALLET_ADDRESS={addr}\n")
-                        if bridge: f.write(f"ZYRA_BRIDGE_URL={bridge}\n")
+                        if bridge: 
+                            f.write(f"ZYRA_BRIDGE_URL={bridge}\n")
+                            global BRIDGE_URL
+                            BRIDGE_URL = bridge
                     
                     print(f"\033[92m✓ Configuration securely saved to {env_file}\033[0m\n")
                     continue
