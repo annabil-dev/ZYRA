@@ -521,7 +521,7 @@ print("hello")
     shutil.make_archive(zip_path.replace('.zip', ''), 'zip', sandbox_dir)
     
     cid = f"P2P_LOCAL_{uuid.uuid4().hex}"
-    if 'p2p_node' in globals():
+    if 'p2p_node' in globals() and p2p_node:
         p2p_node.seed_file(cid, zip_path)
     else:
         print("[\033[91mWARNING\033[0m] P2P Node not found. File will not be seeded.")
@@ -547,8 +547,8 @@ print("hello")
             "trajectory_hash": proof.get('proof_hash', '0x0000'),
             "task_id": task_id,
             "reward": reward,
-            "trajectory_log": cid
-        }, timeout=15)
+            "trajectory_log": cid  # ONLY SEND THE CID (Hash)
+        }, timeout=30)
         
         if response.status_code == 200:
             data = response.json()

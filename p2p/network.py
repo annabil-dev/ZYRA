@@ -3,6 +3,7 @@ import websockets
 import json
 import logging
 import time
+import os
 import requests
 import uuid
 import socket
@@ -20,6 +21,7 @@ class P2PNode:
         
         self.peers = set() # Set of websocket connections
         self.peer_addresses = set() # Set of "ws://ip:port"
+        self.relay_ws = None # WebSocket connection to Bridge Relay
         
         if seed_peer:
             self.peer_addresses.add(seed_peer)
@@ -42,20 +44,59 @@ class P2PNode:
     async def start(self):
         self.loop = asyncio.get_running_loop()
         
-        # 1. Start the server to listen for incoming peer connections
-        server = await websockets.serve(self.handle_client, self.host, self.port)
-        logging.info(f"P2P Node started on ws://{self.host}:{self.port}")
+        # 1. Start the local server to listen for incoming peer connections (LAN)
+        try:
+            server = await websockets.serve(self.handle_client, self.host, self.port)
+            logging.info(f"P2P Node started on ws://{self.host}:{self.port}")
+        except Exception as e:
+            logging.warning(f"Could not start local P2P server: {e}")
         
-        # 2. Register with Bootstrap Tracker to get other peers
+        # 2. Connect to Bridge WebSocket Relay (primary P2P transport)
+        asyncio.create_task(self.connect_to_relay())
+        
+        # 3. Register with Bootstrap Tracker to get other peers
         self.register_with_tracker()
         
-        # 3. Connect to known peers
+        # 4. Connect to known peers (direct, for LAN)
         await self.connect_to_peers()
         
-        # 4. Keep alive / Sync loop
+        # 5. Keep alive / Sync loop
         asyncio.create_task(self.sync_loop())
         
         await asyncio.Future()  # run forever
+
+    async def connect_to_relay(self):
+        """Connect to the Bridge WebSocket Relay for NAT-traversal P2P."""
+        from urllib.parse import urlparse
+        parsed = urlparse(self.tracker_url)
+        relay_host = parsed.hostname or "localhost"
+        relay_port = int(os.environ.get("WS_RELAY_PORT", 5050))
+        relay_uri = f"ws://{relay_host}:{relay_port}"
+        
+        while True:
+            try:
+                self.relay_ws = await websockets.connect(relay_uri)
+                self.peers.add(self.relay_ws)
+                logging.info(f"Connected to Bridge WebSocket Relay at {relay_uri}")
+                print(f"[\033[92mP2P\033[0m] Connected to Bridge Relay ({relay_uri})")
+                
+                # Listen to relay messages
+                try:
+                    async for message_str in self.relay_ws:
+                        msg = parse_message(message_str)
+                        if not msg:
+                            continue
+                        await self.handle_message(msg, self.relay_ws, message_str)
+                except websockets.exceptions.ConnectionClosed:
+                    logging.warning("Bridge Relay connection closed.")
+                    self.peers.discard(self.relay_ws)
+                    self.relay_ws = None
+                    
+            except Exception as e:
+                logging.warning(f"Failed to connect to Bridge Relay ({relay_uri}): {e}")
+            
+            # Reconnect after 10 seconds
+            await asyncio.sleep(10)
 
     def get_public_ip(self):
         # Resolve the correct local IP interface by targeting the tracker

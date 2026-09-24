@@ -75,7 +75,7 @@ class PoUWValidator:
         return proof_payload
 
     @classmethod
-    def evaluate_trajectory_with_llm(cls, cid: str, model_name: str = None, p2p_node=None) -> tuple[bool, str]:
+    def evaluate_trajectory_with_llm(cls, trajectory_data: str, model_name: str = None, p2p_node=None) -> tuple[bool, str]:
         """
         Acts as the Local AI Smart Judge (Execution-Based). 
         Downloads the workspace ZIP from P2P, extracts it, and runs pytest to mathematically prove success.
@@ -93,16 +93,17 @@ class PoUWValidator:
             sandbox = tempfile.mkdtemp(prefix="zyra_judge_")
             zip_path = os.path.join(sandbox, "workspace.zip")
             
-            # Download file from P2P
+            # Download file from P2P (via WebSocket Relay)
+            cid = trajectory_data  # In real P2P, trajectory_log field holds the CID
             if not p2p_node:
                 return False, "P2P Node not available for downloading workspace."
                 
-            print(f"[\033[96mSmart Judge\033[0m] Requesting file {cid} from P2P Network...")
+            print(f"[\033[96mSmart Judge\033[0m] Requesting file {cid} from P2P Network (Relay)...")
             try:
                 future = asyncio.run_coroutine_threadsafe(p2p_node.request_file(cid, zip_path), p2p_node.loop)
                 future.result(timeout=120) # wait up to 2 minutes
             except Exception as e:
-                return False, f"Failed to download workspace via P2P: {e}"
+                return False, f"Failed to download workspace via P2P Relay: {e}"
                 
             print(f"[\033[96mSmart Judge\033[0m] Extracting workspace...")
             try:

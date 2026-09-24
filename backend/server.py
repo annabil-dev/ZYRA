@@ -5,6 +5,7 @@ import sqlite3
 import uuid
 import requests
 import urllib.request
+import threading
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from web3 import Web3
@@ -15,6 +16,17 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
 CORS(app)
+
+# ============================================================
+# WebSocket Relay for P2P Node Communication
+# ============================================================
+import asyncio
+import websockets
+import signal
+
+# Track all connected P2P relay clients
+relay_clients = {}  # ws_connection -> {"node_id": str, "connected_at": float}
+relay_lock = threading.Lock()
 
 # Celo Sepolia Testnet
 RPC_URL = "https://forno.celo-sepolia.celo-testnet.org"
@@ -451,7 +463,64 @@ def network_stats():
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
+    ws_port = int(os.environ.get("WS_RELAY_PORT", 5050))
+    
+    # ============================================================
+    # WebSocket Relay Handler
+    # ============================================================
+    async def relay_handler(websocket):
+        """Handle a single P2P node connection. Relay all messages to other nodes."""
+        node_id = str(uuid.uuid4())[:8]
+        
+        with relay_lock:
+            relay_clients[websocket] = {"node_id": node_id, "connected_at": time.time()}
+        
+        peer_count = len(relay_clients)
+        print(f"[WS Relay] Node {node_id} connected. Total peers: {peer_count}")
+        
+        try:
+            async for message in websocket:
+                # Relay this message to ALL other connected nodes
+                with relay_lock:
+                    targets = [ws for ws in relay_clients if ws != websocket]
+                
+                disconnected = []
+                for target in targets:
+                    try:
+                        await target.send(message)
+                    except Exception:
+                        disconnected.append(target)
+                
+                # Clean up disconnected peers
+                if disconnected:
+                    with relay_lock:
+                        for dc in disconnected:
+                            relay_clients.pop(dc, None)
+                            
+        except websockets.exceptions.ConnectionClosed:
+            pass
+        finally:
+            with relay_lock:
+                relay_clients.pop(websocket, None)
+            print(f"[WS Relay] Node {node_id} disconnected. Total peers: {len(relay_clients)}")
+    
+    async def start_ws_relay():
+        """Start the WebSocket relay server."""
+        print(f"[WS Relay] P2P Relay Server starting on ws://0.0.0.0:{ws_port}")
+        async with websockets.serve(relay_handler, "0.0.0.0", ws_port):
+            await asyncio.Future()  # Run forever
+    
+    def run_ws_relay():
+        """Run the WebSocket relay in its own event loop (separate thread)."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(start_ws_relay())
+    
+    # Start WebSocket Relay in background thread
+    ws_thread = threading.Thread(target=run_ws_relay, daemon=True)
+    ws_thread.start()
+    
     print(f"Bridge Backend Server running on port {port}")
+    print(f"P2P WebSocket Relay running on port {ws_port}")
     print(f"Admin Wallet Address: {admin_account.address}")
     app.run(host="0.0.0.0", port=port, debug=False)
-
