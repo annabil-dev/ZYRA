@@ -76,21 +76,22 @@
         }
 
         .abstract {
-            background-color: #f7fafc;
-            border-left: 4px solid #4299e1;
-            padding: 1.5em;
+            border-top: 2px solid #000;
+            border-bottom: 2px solid #000;
+            padding: 1.5em 0;
             margin-bottom: 3em;
             font-size: 10.5pt;
         }
 
         .abstract-title {
-            font-family: 'Roboto', sans-serif;
+            font-family: Arial, sans-serif;
             font-weight: bold;
             margin-bottom: 1em;
             text-transform: uppercase;
-            font-size: 9pt;
+            font-size: 10pt;
             letter-spacing: 1px;
-            color: #2b6cb0;
+            color: #000;
+            text-align: center;
         }
 
         ul {
@@ -104,10 +105,44 @@
 
         .code-term {
             font-family: monospace;
-            background: #edf2f7;
+            background: #f0f0f0;
             padding: 2px 5px;
             border-radius: 3px;
             font-size: 0.9em;
+            color: #000;
+        }
+
+        /* Flowchart CSS */
+        .flow-diagram {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 2.5em 0;
+            font-family: Arial, sans-serif;
+            color: #000;
+        }
+        .flow-box {
+            border: 2px solid #000;
+            padding: 12px 20px;
+            text-align: center;
+            font-weight: bold;
+            background: #fff;
+            width: 350px;
+            box-shadow: 4px 4px 0px #000;
+        }
+        .flow-sub {
+            display: block;
+            font-weight: normal;
+            font-size: 0.85em;
+            font-family: 'Times New Roman', Times, serif;
+            font-style: italic;
+            margin-top: 5px;
+            color: #333;
+        }
+        .flow-arrow {
+            font-size: 24px;
+            margin: 8px 0;
+            color: #000;
         }
     </style>
 </head>
@@ -148,7 +183,30 @@
             The fundamental flaw of traditional Proof-of-Work (PoW) networks is the expenditure of terawatt-hours of electricity on arbitrary hashing functions. ZYRA repurposes this computational expenditure. The "work" in ZYRA's PoUW is the execution of the Swarm Intelligence workflows. Nodes (Miners) compete to provide the most optimal, bug-free codebase resolving a specific user prompt. The resultant execution log, abstract syntax tree, and output logic collectively form an <em>Execution Trajectory</em>.
         </p>
 
-        <h2>4. The P2P Gossip Protocol & AI Smart Judges</h2>
+        <h2>4. ZYRA Ecosystem Execution Flow</h2>
+        <p>
+            The lifecycle of a ZYRA task illustrates the interaction between end-users, Miner Nodes, AI Smart Judges, and the Celo blockchain. The protocol operates in a strictly chronological, event-driven loop:
+        </p>
+        
+        <div class="flow-diagram">
+            <div class="flow-box">User Client<span class="flow-sub">Submits Prompt & Pay $ZYRA Fee</span></div>
+            <div class="flow-arrow">&#8595;</div>
+            <div class="flow-box">ZYRA Mempool<span class="flow-sub">Queues Unresolved Tasks</span></div>
+            <div class="flow-arrow">&#8595;</div>
+            <div class="flow-box">Miner Node (AI Swarm)<span class="flow-sub">Downloads Task. Planner & Coder Execute Logic locally</span></div>
+            <div class="flow-arrow">&#8595;</div>
+            <div class="flow-box">IPFS (Pinata Node)<span class="flow-sub">Execution Trajectory Compressed & Uploaded. Returns CID Hash</span></div>
+            <div class="flow-arrow">&#8595;</div>
+            <div class="flow-box">P2P Gossip Network<span class="flow-sub">CID Broadcasted to Network for Validation</span></div>
+            <div class="flow-arrow">&#8595;</div>
+            <div class="flow-box">AI Smart Judges<span class="flow-sub">Random Peers Download CID & Validate Output via Local LLM</span></div>
+            <div class="flow-arrow">&#8595;</div>
+            <div class="flow-box">Celo Blockchain<span class="flow-sub">Judges submit Signatures. Contract verifies Consensus</span></div>
+            <div class="flow-arrow">&#8595;</div>
+            <div class="flow-box">Reward Distribution<span class="flow-sub">Miner & Judges receive newly minted $ZYRA Tokens</span></div>
+        </div>
+
+        <h2>5. The P2P Gossip Protocol & AI Smart Judges</h2>
         <p>
             Verifying the output of a mathematical hash is trivial in <span class="code-term">O(1)</span> time; however, verifying the semantic correctness of AI-generated code is highly complex. To achieve trustless consensus on non-deterministic data, ZYRA utilizes a P2P Gossip Network coupled with AI Smart Judges.
         </p>
@@ -156,7 +214,7 @@
             Once a Miner generates an Execution Trajectory, it broadcasts this payload to the ZYRA P2P network. A subset of peer nodes is stochastically selected to act as Smart Judges. These judges employ their local LLMs to semantically analyze the trajectory, ensuring no malicious logic (e.g., wallet drainers or remote exploits) is present, and verifying that the code successfully satisfies the original prompt. If a supermajority of judges mathematically sign off on the trajectory, consensus is achieved.
         </p>
 
-        <h2>5. Payload Compression via IPFS (Pinata)</h2>
+        <h2>6. Payload Compression via IPFS (Pinata)</h2>
         <p>
             A severe limitation in bridging AI with smart contracts is payload dimensionality. An Execution Trajectory is highly verbose, often encompassing megabytes of text. Storing this directly on an EVM-compatible blockchain like Celo would incur astronomical Gas fees, rendering the network economically unviable.
         </p>
@@ -164,7 +222,7 @@
             ZYRA solves this via IPFS integration. The raw trajectory payload is compressed and uploaded to the InterPlanetary File System via the Pinata API. IPFS returns a deterministic, immutable Content Identifier (CID) hash. The ZYRA Smart Contract on the Celo network strictly records this 46-byte CID. This architectural paradigm achieves <span class="code-term">O(1)</span> on-chain storage complexity, ensuring network scalability regardless of the underlying task complexity.
         </p>
 
-        <h2>6. ZYRA Tokenomics</h2>
+        <h2>7. ZYRA Tokenomics</h2>
         <p>
             The ecosystem is governed by its native cryptographic token, $ZYRA. The monetary policy is strictly deflationary, featuring a hard cap of 21,000,000 tokens. 
         </p>
@@ -172,7 +230,7 @@
             Tokens are newly minted and distributed to Miners as a reward for successful PoUW resolution, proportionate to the computational complexity of the task. Furthermore, Smart Judges receive a micro-fee for providing consensus validation. The $ZYRA token also acts as the primary utility layer; end-users must expend $ZYRA to submit complex computational tasks into the network Mempool.
         </p>
         
-        <h2>7. Conclusion</h2>
+        <h2>8. Conclusion</h2>
         <p>
             The ZYRA Protocol represents a paradigm shift in distributed computing. By synthesizing Swarm Intelligence, P2P Gossip validation, IPFS state compression, and Proof-of-Useful-Work on the Celo blockchain, ZYRA provides a scalable, fully decentralized infrastructure for the future of Agentic AI.
         </p>
