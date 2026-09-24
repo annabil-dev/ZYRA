@@ -669,6 +669,8 @@ try:
                 ('/logs', 'Lihat audit log dari tugas sebelumnya'),
                 ('/clear', 'Bersihkan layar terminal dan memori percakapan'),
                 ('/status', 'Alias untuk /sys (Cek Hardware)'),
+                ('/config', 'Konfigurasi Wallet dan Tracker Server'),
+                ('/wallet', 'Lihat saldo ZYRA dan alamat Wallet'),
                 ('exit', 'Tutup aplikasi ZYRA')
             ]
 
@@ -850,6 +852,7 @@ def main():
                     print("\n\033[1m[ZYRA Commands]\033[0m")
                     print("  \033[93m/help\033[0m    - Show this help message")
                     print("  \033[93m/wallet\033[0m  - Show current wallet address and ZYRA balance")
+                    print("  \033[93m/config\033[0m  - Configure Planner Model, EVM Wallet, and Tracker URL")
                     print("  \033[93m/clear\033[0m   - Clear terminal screen and conversation history")
                     print("  \033[93m/model\033[0m   - Change active LLM model (e.g., /model llama3.2)")
                     print("  \033[93m/sys\033[0m     - Monitor hardware (CPU & RAM usage)")
@@ -978,7 +981,7 @@ def main():
                     except Exception as e:
                         print(f"\033[91m[Error]\033[0m Failed to export: {e}\n")
                     continue
-                elif user_input == 'zyra config':
+                elif user_input == '/config':
                     print("\033[94m[ZYRA Config]\033[0m")
                     model = input("\033[90mSelect Local Planner Model (e.g. llama3.1:8b): \033[0m")
                     addr = input("\033[90mEnter EVM Wallet Address: \033[0m")
