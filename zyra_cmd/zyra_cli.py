@@ -559,6 +559,21 @@ print("hello")
             
             # Save local copy for /wallet history (as pending for now)
             ledger.add_pouw_reward(target_wallet, reward, proof)
+            
+            print("\n\033[93m[System]\033[0m Waiting for validation result from network before taking new tasks...")
+            try:
+                import time
+                start_wait = time.time()
+                while time.time() - start_wait < 180:
+                    status_resp = requests.get(f"{BRIDGE_URL}/validation_status/{validation_id}", timeout=5)
+                    if status_resp.status_code == 200:
+                        val_status = status_resp.json().get("status")
+                        if val_status == "completed":
+                            print("\033[92m[System]\033[0m Validation completed by the network!\n")
+                            break
+                    time.sleep(5)
+            except Exception as e:
+                pass
         elif response.status_code == 500 and response.json().get("status") == "validated_but_mint_failed":
             error_msg = response.json().get("error", "Unknown blockchain error")
             print(f"\033[93m[FALLBACK]\033[0m PoUW is Valid, but Blockchain minting failed ({error_msg}).")

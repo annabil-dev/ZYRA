@@ -241,6 +241,23 @@ def submit_pouw():
         "validation_id": validation_id
     }), 200
 
+@app.route('/validation_status/<validation_id>', methods=['GET'])
+def get_validation_status(validation_id):
+    """Miner polls this to check if their task has been validated yet."""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute('SELECT * FROM pending_validations WHERE id = ?', (validation_id,))
+    task = c.fetchone()
+    conn.close()
+    
+    if task:
+        # Still in pending_validations means it hasn't been validated yet
+        return jsonify({"status": "pending"}), 200
+    else:
+        # If it's gone from pending_validations, it was either approved or rejected
+        return jsonify({"status": "completed"}), 200
+
 @app.route('/api/ipfs/upload', methods=['POST'])
 def upload_ipfs_endpoint():
     """Allows Miners to upload trajectories to IPFS using the Server's Pinata API keys"""
