@@ -281,29 +281,29 @@ def get_validation_task():
 def submit_verdict():
     """Validator submits the verdict for a task. If valid, Bridge mints the reward for the Miner."""
     data = request.json
-    trajectory_hash = data.get('trajectory_hash')
+    validation_id = data.get('validation_id')
     validator_wallet = data.get('validator_wallet')
     is_valid = data.get('is_valid')
     reason = data.get('reason', '')
     
-    if not trajectory_hash or validator_wallet is None or is_valid is None:
+    if not validation_id or validator_wallet is None or is_valid is None:
         return jsonify({"error": "Missing required data"}), 400
         
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
-    c.execute('SELECT * FROM pending_validations WHERE trajectory_hash = ?', (trajectory_hash,))
+    c.execute('SELECT * FROM pending_validations WHERE id = ?', (validation_id,))
     task = c.fetchone()
     
     if not task:
         conn.close()
         return jsonify({"error": "Task not found in mempool"}), 404
         
-    print(f"\n[Relayer] Received verdict from {validator_wallet} for trajectory {trajectory_hash}: {'VALID' if is_valid else 'INVALID'}")
+    print(f"\n[Relayer] Received verdict from {validator_wallet} for validation {validation_id}: {'VALID' if is_valid else 'INVALID'}")
     
     if not is_valid:
         # Task is rejected by network. Delete from mempool.
-        c.execute('DELETE FROM pending_validations WHERE trajectory_hash = ?', (trajectory_hash,))
+        c.execute('DELETE FROM pending_validations WHERE id = ?', (validation_id,))
         conn.commit()
         conn.close()
         print(f"[Relayer] Task rejected. Deleted from mempool.")
@@ -314,7 +314,7 @@ def submit_verdict():
     reward_amount = task['reward']
     task_id = task['task_id']
     
-    c.execute('DELETE FROM pending_validations WHERE trajectory_hash = ?', (trajectory_hash,))
+    c.execute('DELETE FROM pending_validations WHERE id = ?', (validation_id,))
     conn.commit()
     conn.close()
     

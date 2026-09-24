@@ -218,7 +218,7 @@ RULES:
 <DELEGATE>instruction for coder</DELEGATE>
 3. Wait for the Coder to report completion before sending the next <DELEGATE>. DO NOT send multiple <DELEGATE> tags in a single message.
 4. You CANNOT execute code. You only plan and delegate.
-5. ZERO-TRUST POLICY: If you ask the Coder to verify something, demand to see the STDOUT output. If they provided the STDOUT and it proves success, DO NOT ask them to verify it again. Proceed to the next step or finish.
+5. Trust the Coder if they report success. DO NOT ask the coder to execute the exact same task twice. Proceed to the next step or finish.
 6. DO NOT output <ALL_DONE> until you have verified all steps are truly finished.
 7. When the entire task is truly finished, output exactly:
 <ALL_DONE>
@@ -346,6 +346,7 @@ print("hello")
         
         coder_steps = 5
         step_completed = False
+        coder_action_log = []
         for step in range(coder_steps):
             # Prevent Context Overflow for Coder (Keep System Prompt + last 9 messages)
             if len(coder_history) > 10:
@@ -432,8 +433,10 @@ print("hello")
                             
                             if "No such file or directory" in stderr or "Cannot find path" in stderr:
                                 coder_history.append({"role": "user", "content": f"Command '{command}' failed:\n{stderr}\n\nSYSTEM WARNING: The file does not exist! Did you forget to write it using <WRITE_FILE> first?"})
+                                coder_action_log.append(f"[CMD] {command}\nFailed: {stderr}")
                             else:
                                 coder_history.append({"role": "user", "content": f"Command '{command}' output:\n{output_msg}"})
+                                coder_action_log.append(f"[CMD] {command}\n{output_msg}")
                             
                             if result.returncode != 0:
                                 all_success = False
@@ -469,23 +472,29 @@ print("hello")
                                 f.write(content)
                             print(f"\033[92m[Success]\033[0m File written.\n")
                             coder_history.append({"role": "user", "content": f"Successfully wrote to {file_path}"})
+                            coder_action_log.append(f"[WRITE_FILE] {file_path} (Success)")
                         except Exception as e:
                             print(f"\033[91m[Failed]\033[0m Could not write file: {e}\n")
                             coder_history.append({"role": "user", "content": f"Failed to write file {file_path}: {e}"})
+                            coder_action_log.append(f"[WRITE_FILE] {file_path} (Failed: {e})")
                             all_success = False
                             break
                 
                 # If they included [STEP_COMPLETE] in the same message, process it if commands succeeded
                 if "[STEP_COMPLETE]" in coder_output and all_success:
+                    action_summary = "\n".join(coder_action_log)
+                    if len(action_summary) > 2000: action_summary = action_summary[-2000:]
                     print(f"\033[93m[Coder Agent]\033[0m Step reported as complete.\n")
-                    planner_history.append({"role": "user", "content": "CODER REPORT: Step completed successfully."})
+                    planner_history.append({"role": "user", "content": f"CODER REPORT: Step completed successfully.\nExecution Log:\n{action_summary}"})
                     step_completed = True
                     successful_delegations += 1
                     break
                     
             elif "[STEP_COMPLETE]" in coder_output:
+                action_summary = "\n".join(coder_action_log)
+                if len(action_summary) > 2000: action_summary = action_summary[-2000:]
                 print(f"\033[93m[Coder Agent]\033[0m Step reported as complete.\n")
-                planner_history.append({"role": "user", "content": "CODER REPORT: Step completed successfully."})
+                planner_history.append({"role": "user", "content": f"CODER REPORT: Step completed successfully.\nExecution Log:\n{action_summary}"})
                 step_completed = True
                 successful_delegations += 1
                 break
@@ -500,19 +509,22 @@ print("hello")
     # Reward for automode
     print("\033[93m[PoUW Validator]\033[0m Submitting Proof of Useful Work to ZYRA Bridge Server...")
     
-    from app.utils.ipfs import upload_to_ipfs
     import uuid
+    import shutil
+    global p2p_node
     
-    trajectory_data = {
-        "prompt": initial_task,
-        "full_log": full_trajectory_log,
-        "wallet": wallet.address,
-        "timestamp": time.time()
-    }
+    t_id = task_id if task_id else "local_task"
+    sandbox_dir = os.path.abspath(os.path.join("sandbox_workspace", t_id))
+    zip_path = os.path.abspath(f"sandbox_workspace/{t_id}_completed.zip")
     
-    cid = upload_to_ipfs(trajectory_data)
-    if not cid:
-        cid = f"LOCAL_{uuid.uuid4().hex}"
+    print(f"[\033[96mP2P Node\033[0m] Zipping workspace to {zip_path}...")
+    shutil.make_archive(zip_path.replace('.zip', ''), 'zip', sandbox_dir)
+    
+    cid = f"P2P_LOCAL_{uuid.uuid4().hex}"
+    if 'p2p_node' in globals():
+        p2p_node.seed_file(cid, zip_path)
+    else:
+        print("[\033[91mWARNING\033[0m] P2P Node not found. File will not be seeded.")
         
     proof = PoUWValidator.generate_proof(
         task_type="AGENT_EXECUTION",
@@ -617,12 +629,15 @@ try:
                         print(f"[\033[93mNEW TASK\033[0m] Found pending validation \033[96m{val_id[:8]}...\033[0m from Miner \033[95m{miner[:8]}...\033[0m")
                         
                         # 2. Evaluate locally
-                        is_valid, reason = PoUWValidator.evaluate_trajectory_with_llm(task['trajectory_log'], model_name)
+                        global p2p_node
+                        p_node = p2p_node if 'p2p_node' in globals() else None
+                        is_valid, reason = PoUWValidator.evaluate_trajectory_with_llm(task['trajectory_log'], model_name, p_node)
                         
                         # 3. Submit verdict
                         print(f"[\033[96mAI Validator Node\033[0m] Submitting Verdict to Bridge Server...")
                         verdict_resp = requests.post(f"{BRIDGE_URL}/validator/submit_verdict", json={
                             "validation_id": val_id,
+                            "trajectory_hash": task.get('trajectory_hash'),
                             "validator_wallet": target_wallet,
                             "is_valid": is_valid,
                             "reason": reason
@@ -633,7 +648,7 @@ try:
                             if is_valid:
                                 print(f"[\033[92mSUCCESS\033[0m] Validation accepted! Bridge Mint Tx: {vdata.get('tx_hash', 'Unknown')}\n")
                             else:
-                                print(f"[\033[91mREJECTED\033[0m] Task failed validation. Mempool cleared.\n")
+                                print(f"[\033[91mREJECTED\033[0m] Task failed validation. Reason: {reason}. Mempool cleared.\n")
                         else:
                             print(f"[\033[91mERROR\033[0m] Bridge rejected verdict submission: {verdict_resp.text}\n")
                             

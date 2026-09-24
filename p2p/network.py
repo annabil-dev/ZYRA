@@ -32,6 +32,11 @@ class P2PNode:
         # Keep track of seen message IDs to prevent infinite gossip loops
         self.seen_messages = set()
         
+        # P2P File Transfer State
+        self.hosted_files = {} # cid -> filepath
+        self.downloading_files = {} # cid -> { "chunks": {}, "path": filepath }
+        self.file_transfer_callbacks = {} # cid -> asyncio.Future()
+        
         self.on_trajectory_received = None # Callback function
         
     async def start(self):
@@ -183,6 +188,46 @@ class P2PNode:
                 for s in sigs:
                     if s not in self.signatures[t_hash]:
                         self.signatures[t_hash].append(s)
+                        
+        elif msg_type == MessageType.FILE_OFFER:
+            cid = payload.get("cid")
+            # Just forward the offer to others
+            await self.broadcast(raw_msg_str, exclude=websocket)
+            
+        elif msg_type == MessageType.FILE_REQUEST:
+            cid = payload.get("cid")
+            if cid in self.hosted_files:
+                # We have the file, send it back directly to the requester
+                asyncio.create_task(self.send_file_chunks(cid, websocket))
+            else:
+                # We don't have it, act as Relay and forward the request
+                await self.broadcast(raw_msg_str, exclude=websocket)
+                
+        elif msg_type == MessageType.FILE_CHUNK:
+            cid = payload.get("cid")
+            chunk_index = payload.get("chunk_index")
+            data = payload.get("data")
+            
+            if cid in self.downloading_files:
+                dl = self.downloading_files[cid]
+                if chunk_index == -1:
+                    # EOF - Reconstruct file
+                    import base64
+                    try:
+                        with open(dl["path"], 'wb') as f:
+                            for i in sorted(dl["chunks"].keys()):
+                                f.write(base64.b64decode(dl["chunks"][i]))
+                        logging.info(f"File {cid} assembled successfully at {dl['path']}.")
+                        if cid in self.file_transfer_callbacks:
+                            if not self.file_transfer_callbacks[cid].done():
+                                self.file_transfer_callbacks[cid].set_result(True)
+                    except Exception as e:
+                        logging.error(f"Failed to assemble file {cid}: {e}")
+                else:
+                    dl["chunks"][chunk_index] = data
+            else:
+                # Act as Relay and forward the chunk
+                await self.broadcast(raw_msg_str, exclude=websocket)
 
     async def broadcast(self, raw_msg_str, exclude=None):
         """Gossip Protocol: Send message to all connected peers"""
@@ -203,6 +248,66 @@ class P2PNode:
                 
         for peer in disconnected:
             self.peers.remove(peer)
+
+    def seed_file(self, cid, filepath):
+        """Register a file to be seeded by this node."""
+        self.hosted_files[cid] = filepath
+        logging.info(f"Seeding file {cid} from {filepath}")
+        
+        # Broadcast FILE_OFFER
+        import os
+        total_chunks = (os.path.getsize(filepath) // 65536) + 1
+        msg = create_message(MessageType.FILE_OFFER, {"cid": cid, "total_chunks": total_chunks})
+        self._run_coroutine(self.broadcast(msg))
+
+    async def request_file(self, cid, dest_path):
+        """Request a file from the P2P network and wait for completion."""
+        self.downloading_files[cid] = {"chunks": {}, "path": dest_path}
+        future = self.loop.create_future()
+        self.file_transfer_callbacks[cid] = future
+        
+        logging.info(f"Broadcasting FILE_REQUEST for {cid}")
+        msg = create_message(MessageType.FILE_REQUEST, {"cid": cid})
+        await self.broadcast(msg)
+        
+        # Wait until file is assembled
+        await future
+        return dest_path
+
+    async def send_file_chunks(self, cid, websocket):
+        """Read local file and send chunks directly over websocket."""
+        filepath = self.hosted_files.get(cid)
+        if not filepath: return
+        
+        logging.info(f"Sending chunks for {cid} to requester.")
+        try:
+            import base64
+            with open(filepath, 'rb') as f:
+                chunk_index = 0
+                while True:
+                    data = f.read(65536) # 64 KB chunks
+                    if not data:
+                        break
+                    
+                    b64_data = base64.b64encode(data).decode('utf-8')
+                    msg = create_message(MessageType.FILE_CHUNK, {
+                        "cid": cid,
+                        "chunk_index": chunk_index,
+                        "data": b64_data
+                    })
+                    await websocket.send(msg)
+                    chunk_index += 1
+                    
+            # Send EOF chunk
+            eof_msg = create_message(MessageType.FILE_CHUNK, {
+                "cid": cid,
+                "chunk_index": -1,
+                "data": ""
+            })
+            await websocket.send(eof_msg)
+            logging.info(f"Finished sending all chunks for {cid}.")
+        except Exception as e:
+            logging.error(f"Error sending file {cid}: {e}")
 
     # --- Public API for Local Node ---
     def _run_coroutine(self, coro):

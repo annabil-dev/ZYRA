@@ -9,6 +9,9 @@ class MessageType:
     VALIDATION_SIGNATURE = "VALIDATION_SIGNATURE"
     SYNC_MEMPOOL = "SYNC_MEMPOOL"
     MEMPOOL_DATA = "MEMPOOL_DATA"
+    FILE_OFFER = "FILE_OFFER"
+    FILE_REQUEST = "FILE_REQUEST"
+    FILE_CHUNK = "FILE_CHUNK"
 
 def create_message(msg_type, payload=None):
     return json.dumps({

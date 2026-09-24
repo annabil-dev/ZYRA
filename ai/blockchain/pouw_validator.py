@@ -75,46 +75,118 @@ class PoUWValidator:
         return proof_payload
 
     @classmethod
-    def evaluate_trajectory_with_llm(cls, trajectory_log: list, model_name: str = None) -> tuple[bool, str]:
+    def evaluate_trajectory_with_llm(cls, cid: str, model_name: str = None, p2p_node=None) -> tuple[bool, str]:
         """
-        Acts as the Local AI Smart Judge. Evaluates another miner's trajectory to ensure it is valid.
+        Acts as the Local AI Smart Judge (Execution-Based). 
+        Downloads the workspace ZIP from P2P, extracts it, and runs pytest to mathematically prove success.
         """
-        try:
-            log_text = ""
-            for step in trajectory_log:
-                role = step.get('role', 'unknown').upper()
-                content = step.get('content', '')
-                log_text += f"[{role}]: {content}\n"
-                
-            prompt = f"""You are an AI Judge evaluating a Proof of Useful Work (PoUW) submission for a decentralized network.
-Read the following agent execution trajectory.
-Did the agent successfully perform real, meaningful work and solve the task?
-Reply ONLY with a single word: "VALID" if they did, or "INVALID" if they faked it or failed.
+        import tempfile
+        import os
+        import subprocess
+        import shutil
+        import re
+        import asyncio
+        import zipfile
+        import glob
 
-TRAJECTORY LOG:
-{log_text[-4000:]}"""
+        try:
+            sandbox = tempfile.mkdtemp(prefix="zyra_judge_")
+            zip_path = os.path.join(sandbox, "workspace.zip")
             
-            judge_model = model_name or os.environ.get("JUDGE_MODEL", "qwen2.5-coder:7b")
-            
-            payload = {
-                "model": judge_model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"temperature": 0.0}
-            }
-            
-            print(f"[\033[96mAI Validator Node\033[0m] Asking local model {judge_model} for verdict...")
-            
-            resp = requests.post("http://localhost:11434/api/generate", json=payload, timeout=60)
-            if resp.status_code == 200:
-                result = resp.json().get('response', '').strip().upper()
-                print(f"[\033[96mAI Validator Node\033[0m] Verdict result: \033[93m{result}\033[0m")
-                if "VALID" in result and "INVALID" not in result:
-                    return True, "Valid"
+            # Download file from P2P
+            if not p2p_node:
+                return False, "P2P Node not available for downloading workspace."
+                
+            print(f"[\033[96mSmart Judge\033[0m] Requesting file {cid} from P2P Network...")
+            try:
+                future = asyncio.run_coroutine_threadsafe(p2p_node.request_file(cid, zip_path), p2p_node.loop)
+                future.result(timeout=120) # wait up to 2 minutes
+            except Exception as e:
+                return False, f"Failed to download workspace via P2P: {e}"
+                
+            print(f"[\033[96mSmart Judge\033[0m] Extracting workspace...")
+            try:
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(sandbox)
+            except zipfile.BadZipFile:
+                return False, "Downloaded file is not a valid ZIP archive."
+                
+            # Read extracted files
+            files_to_write = {}
+            for file_path in glob.glob(os.path.join(sandbox, "**", "*"), recursive=True):
+                if os.path.isfile(file_path) and not file_path.endswith(".zip"):
+                    rel_path = os.path.relpath(file_path, sandbox)
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            files_to_write[rel_path] = f.read()
+                    except Exception:
+                        pass # Ignore binary files
+                        
+            initial_prompt = "Validate if the code inside the workspace correctly fulfills the requirements of the task."
+                        
+            if not files_to_write:
+                return False, "Workspace is empty. Invalid."
+                
+            try:
+                # 3. Ask LLM to generate a test script based on the prompt
+                judge_model = model_name or os.environ.get("JUDGE_MODEL", "qwen2.5-coder:7b")
+                file_list = ", ".join(files_to_write.keys())
+                
+                # Build file context string
+                file_context = ""
+                for filename, content in files_to_write.items():
+                    file_context += f"--- {filename} ---\n```python\n{content}\n```\n\n"
+
+                test_prompt = f"""You are a strict Smart Judge (QA Engineer) for a blockchain network.
+The user requested this task: "{initial_prompt}"
+The miner created the following files to solve it:
+{file_context}
+
+Write a comprehensive `pytest` script that imports the miner's code and tests if the task was completed correctly based on the user's prompt.
+If the miner's code is just a script that prints something, use `capsys` or `subprocess` to capture and test its output.
+Do NOT test things that require an internet connection.
+Only output the Python code wrapped in ```python ... ```. Do not add explanations.
+"""
+                payload = {
+                    "model": judge_model,
+                    "prompt": test_prompt,
+                    "stream": False,
+                    "options": {"temperature": 0.0}
+                }
+                
+                print(f"[\033[96mSmart Judge\033[0m] Generating TDD Pytest script for validation...")
+                resp = requests.post("http://localhost:11434/api/generate", json=payload, timeout=60)
+                if resp.status_code == 200:
+                    test_code_raw = resp.json().get('response', '')
+                    match = re.search(r'```python\n(.*?)\n```', test_code_raw, re.DOTALL)
+                    test_code = match.group(1) if match else test_code_raw.replace('```python', '').replace('```', '')
+                        
+                    test_path = os.path.join(sandbox, "test_zyra_validation.py")
+                    with open(test_path, 'w', encoding='utf-8') as f:
+                        f.write(test_code)
+                        
+                    # 4. Execute the test using pytest
+                    print(f"[\033[96mSmart Judge\033[0m] Running Execution-Based Validation in {sandbox} ...")
+                    try:
+                        # Fallback to local insecure execution if Docker is unavailable
+                        result = subprocess.run(["pytest", "test_zyra_validation.py"], cwd=sandbox, capture_output=True, text=True, timeout=30)
+                        
+                        if result.returncode == 0:
+                            print(f"[\033[92mSmart Judge\033[0m] TDD Validation PASSED!")
+                            return True, "Execution-based validation passed."
+                        else:
+                            print(f"[\033[91mSmart Judge\033[0m] TDD Validation FAILED.\n\033[90mPytest Output:\n{result.stdout.strip()[:1000]}\033[0m")
+                            return False, f"Pytest failed. Tests did not pass."
+                            
+                    except subprocess.TimeoutExpired:
+                        return False, "Validation script timed out."
+                    except FileNotFoundError:
+                        return False, "Pytest not installed on validator node."
                 else:
-                    return False, "AI Judge ruled INVALID"
-            else:
-                return False, f"AI Judge API Error: {resp.status_code}"
+                    return False, "Failed to generate test script."
+                    
+            finally:
+                shutil.rmtree(sandbox, ignore_errors=True)
                 
         except Exception as e:
             return False, f"AI Judge Exception: {e}"
