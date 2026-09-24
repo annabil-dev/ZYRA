@@ -31,6 +31,12 @@ import dotenv
 
 # Load .env from current directory first (for users running zyra in their project dir)
 dotenv.load_dotenv(".env")
+# Fallback to global user config
+global_env_dir = Path.home() / ".zyra"
+global_env_dir.mkdir(parents=True, exist_ok=True)
+global_env_path = global_env_dir / ".env"
+if global_env_path.exists():
+    dotenv.load_dotenv(str(global_env_path))
 # Fallback to package root
 dotenv.load_dotenv(str(Path(__file__).resolve().parent.parent / '.env'))
 
@@ -976,7 +982,18 @@ def main():
                     print("\033[94m[ZYRA Config]\033[0m")
                     model = input("\033[90mSelect Local Planner Model (e.g. llama3.1:8b): \033[0m")
                     addr = input("\033[90mEnter EVM Wallet Address: \033[0m")
-                    print(f"\033[92m✓ Configuration securely saved to .env\033[0m\n")
+                    bridge = input("\033[90mEnter Tracker Server URL (default: http://127.0.0.1:5000): \033[0m")
+                    
+                    global_env_dir = Path.home() / ".zyra"
+                    global_env_dir.mkdir(parents=True, exist_ok=True)
+                    env_file = global_env_dir / ".env"
+                    
+                    with open(env_file, "w") as f:
+                        if model: f.write(f"PLANNER_MODEL={model}\n")
+                        if addr: f.write(f"WALLET_ADDRESS={addr}\n")
+                        if bridge: f.write(f"ZYRA_BRIDGE_URL={bridge}\n")
+                    
+                    print(f"\033[92m✓ Configuration securely saved to {env_file}\033[0m\n")
                     continue
                 elif user_input.startswith('/link '):
                     addr = user_input.split(' ', 1)[1].strip()
