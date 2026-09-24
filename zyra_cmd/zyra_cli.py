@@ -723,6 +723,9 @@ except ImportError:
     PromptSession = None
 
 def main():
+    global BRIDGE_URL
+    global p2p_node
+    
     parser = argparse.ArgumentParser(description="ZYRA Developer CLI - Agentic AI + PoUW Mining")
     parser.add_argument("prompt", type=str, nargs='?', help="The prompt or task for ZYRA AI (Optional)")
     parser.add_argument("--model", type=str, default="llama3.1:8b", help="Default Ollama model to use")
@@ -749,7 +752,6 @@ def main():
     from p2p.network import P2PNode
     
     p2p_port = random.randint(5001, 5999)
-    global p2p_node
     p2p_node = P2PNode(port=p2p_port, tracker_url=args.tracker, seed_peer=args.seed_peer)
     
     def p2p_judge_worker(payload):
@@ -1026,7 +1028,6 @@ def main():
                         if addr: f.write(f"WALLET_ADDRESS={addr}\n")
                         if bridge: 
                             f.write(f"ZYRA_BRIDGE_URL={bridge}\n")
-                            global BRIDGE_URL
                             BRIDGE_URL = bridge
                     
                     print(f"\033[92m✓ Configuration securely saved to {env_file}\033[0m\n")
