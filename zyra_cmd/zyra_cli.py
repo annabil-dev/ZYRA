@@ -522,6 +522,10 @@ print("hello")
     
     cid = f"P2P_LOCAL_{uuid.uuid4().hex}"
     if 'p2p_node' in globals() and p2p_node:
+        print(f"[\033[96mDEBUG P2P\033[0m] Zipping workspace to {zip_path}...")
+        print(f"[\033[96mDEBUG P2P\033[0m] Current peers connected: {len(p2p_node.peers)}")
+        if len(p2p_node.peers) == 0:
+            print("[\033[91mDEBUG P2P\033[0m] MINER IS NOT CONNECTED TO ANY P2P RELAY (0 peers)! Check Firewall Port 5050!")
         p2p_node.seed_file(cid, zip_path)
     else:
         print("[\033[91mWARNING\033[0m] P2P Node not found. File will not be seeded.")

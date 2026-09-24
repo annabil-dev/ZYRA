@@ -94,6 +94,7 @@ class P2PNode:
                     
             except Exception as e:
                 logging.warning(f"Failed to connect to Bridge Relay ({relay_uri}): {e}")
+                print(f"[\033[91mDEBUG P2P\033[0m] Miner failed to connect to Relay Server at {relay_uri}! Error: {e}. Check Firewall Port 5050!")
             
             # Reconnect after 10 seconds
             await asyncio.sleep(10)
@@ -364,13 +365,16 @@ class P2PNode:
         try:
             loop = asyncio.get_running_loop()
             asyncio.create_task(coro)
+            print("[\033[93mDEBUG P2P\033[0m] Scheduled coroutine on current loop.")
         except RuntimeError:
             # We are not in an event loop, or in a different thread
             # Use the saved loop
             if hasattr(self, 'loop') and self.loop:
                 asyncio.run_coroutine_threadsafe(coro, self.loop)
+                print("[\033[93mDEBUG P2P\033[0m] Scheduled coroutine via threadsafe.")
             else:
                 logging.warning("Cannot broadcast message, no event loop running.")
+                print("[\033[91mDEBUG P2P\033[0m] Cannot broadcast message, no event loop running.")
 
     def add_task(self, task_payload):
         task_id = task_payload["task_id"]
