@@ -671,6 +671,7 @@ try:
                 ('/status', 'Alias untuk /sys (Cek Hardware)'),
                 ('/config', 'Konfigurasi Wallet dan Tracker Server'),
                 ('/wallet', 'Lihat saldo ZYRA dan alamat Wallet'),
+                ('/submit', 'Lempar tugas coding ke jaringan (Mempool)'),
                 ('exit', 'Tutup aplikasi ZYRA')
             ]
 
@@ -859,6 +860,7 @@ def main():
                     print("  \033[93m/read\033[0m    - Read a local file (e.g., /read script.py)")
                     print("  \033[93m/search\033[0m  - Live web search (e.g., /search latest news)")
                     print("  \033[93m/automode\033[0m- Autonomous Coding Agent (e.g., /automode create a react app)")
+                    print("  \033[93m/submit\033[0m  - Submit task to ZYRA Mempool for Miners (e.g., /submit make a python script)")
                     print("  \033[93m/export\033[0m  - Save current chat history to a Markdown file")
                     print("  \033[93m/logs\033[0m    - Open the most recent PoUW Swarm Audit Log")
                     print("  \033[93m/judge\033[0m   - Run as P2P Validator Node")
@@ -1068,6 +1070,29 @@ def main():
                         auto_yes = True
                         task = task[4:].strip()
                     run_automode(llm, task, history, wallet, ledger, llm.model_name, auto_yes, args.planner_model, args.coder_model)
+                    continue
+                elif user_input.startswith('/submit '):
+                    task_prompt = user_input.split(' ', 1)[1].strip()
+                    if not task_prompt:
+                        print("\033[91m[Error]\033[0m Harap masukkan tugas. Contoh: /submit Buat aplikasi python...\n")
+                        continue
+                    
+                    print(f"\033[93m[Network]\033[0m Mengirim tugas ke Mempool (Bridge Server: {BRIDGE_URL})...")
+                    try:
+                        resp = requests.post(f"{BRIDGE_URL}/client/submit_task", json={
+                            "prompt": task_prompt,
+                            "reward": 2.5
+                        }, timeout=10)
+                        if resp.status_code == 201:
+                            data = resp.json()
+                            print(f"\033[92m[Success]\033[0m Tugas berhasil dilempar ke jaringan!")
+                            print(f"Task ID: \033[96m{data.get('task_id')}\033[0m")
+                            print("Sekarang tinggal tunggu para Miner di jaringan untuk mengerjakan tugas ini.\n")
+                        else:
+                            print(f"\033[91m[Error]\033[0m Gagal submit: {resp.text}\n")
+                    except requests.exceptions.RequestException as e:
+                        print(f"\033[91m[Connection Error]\033[0m Tidak bisa terhubung ke Bridge Server ({BRIDGE_URL}).")
+                        print("Pastikan konfigurasi URL Tracker sudah benar lewat perintah /config.\n")
                     continue
                 elif cmd == '/deploy':
                     print("\n\033[93m[System]\033[0m Starting Auto-Deploy to Localhost...")
