@@ -126,7 +126,6 @@ def process_prompt(llm, prompt, history, wallet, ledger, model_name):
     # --- PoUW MINING LOGIC ---
     print("\033[93m[PoUW Validator]\033[0m Submitting Proof of Useful Work...")
     
-    from app.utils.ipfs import upload_to_ipfs
     import uuid
     
     trajectory_data = {
@@ -137,7 +136,15 @@ def process_prompt(llm, prompt, history, wallet, ledger, model_name):
         "timestamp": time.time()
     }
     
-    cid = upload_to_ipfs(trajectory_data)
+    print("\033[94m[IPFS]\033[0m Requesting Tracker Server to pin payload to Pinata...")
+    try:
+        res = requests.post(f"{BRIDGE_URL}/api/ipfs/upload", json={"trajectory": trajectory_data}, timeout=30)
+        res.raise_for_status()
+        cid = res.json().get("cid")
+    except Exception as e:
+        print(f"\033[91m[IPFS ERROR]\033[0m Could not upload via Tracker Server: {e}")
+        cid = None
+
     if not cid:
         cid = f"LOCAL_{uuid.uuid4().hex}"
         
@@ -213,20 +220,20 @@ RULES:
 <CONFIRM_DONE>"""
     planner_history.append({"role": "user", "content": planner_sys})
     
-    coder_sys = """You are the CODER AGENT running on WINDOWS POWERSHELL.
+    coder_sys = """You are the CODER AGENT running in a SECURE LINUX DOCKER SANDBOX (python:3.10-slim).
 You will receive instructions from the PLANNER.
 RULES:
-1. You are on Windows. DO NOT use Linux commands like `apt-get` or `bash`. Use PowerShell equivalents.
-2. CRITICAL RULE: If a file path contains spaces (like `D:\Semester 5`), you MUST wrap it in double quotes when running commands! Example: `python "D:\Semester 5\script.py"`
-3. To execute a command, output it exactly like this:
+1. You are on Linux. DO NOT use Windows/PowerShell commands. Use standard Linux commands (e.g., `ls`, `cat`, `python`).
+2. CRITICAL RULE: Your environment is ephemeral and has NO internet access (network=none). Do NOT try to `pip install` packages or download files. Use standard libraries.
+3. You are executing in the `/app` directory. Any files you write using <WRITE_FILE> will be available here.
+4. To execute a command, output it exactly like this:
 <CMD>your command</CMD>
-4. To CREATE or WRITE a file, DO NOT use terminal commands (like echo or Set-Content). You MUST use the WRITE_FILE tool exactly like this:
-<WRITE_FILE path="exact_path.py">
+5. To CREATE or WRITE a file, DO NOT use terminal commands. You MUST use the WRITE_FILE tool exactly like this:
+<WRITE_FILE path="script.py">
 import os
 print("hello")
 </WRITE_FILE>
-5. You can output MULTIPLE <CMD> and <WRITE_FILE> tags per turn to execute steps sequentially.
-6. ANTI-LAZINESS POLICY: If the Planner asks you to VERIFY or CHECK a file/result, you MUST execute a command (like `cat` or running a script) in the SAME turn to prove it works. You CANNOT just output [STEP_COMPLETE] without providing terminal output proof.
+6. ANTI-LAZINESS POLICY: If the Planner asks you to VERIFY or CHECK a file/result, you MUST execute a command (like `cat` or running a script) in the SAME turn to prove it works.
 7. When the delegated step is fully complete, output exactly:
 [STEP_COMPLETE]"""
     coder_history.append({"role": "user", "content": coder_sys})
@@ -324,6 +331,13 @@ print("hello")
         print(f"\033[95m[Planner -> Coder]\033[0m \033[96m{preview_instr}\033[0m\n")
         coder_history.append({"role": "user", "content": f"PLANNER INSTRUCTION: {delegate_instruction}"})
         
+        # --- SANDBOX SETUP ---
+        import shutil
+        t_id = task_id if task_id else "local_task"
+        sandbox_dir = os.path.abspath(os.path.join("sandbox_workspace", t_id))
+        os.makedirs(sandbox_dir, exist_ok=True)
+        # ---------------------
+        
         coder_steps = 5
         step_completed = False
         for step in range(coder_steps):
@@ -367,10 +381,35 @@ print("hello")
                                 break
                                 
                         try:
-                            if os.name == 'nt':
-                                result = subprocess.run(["powershell", "-Command", command], capture_output=True, text=True, timeout=60)
+                            # Build Docker Sandbox Command
+                            docker_cmd = [
+                                "docker", "run", "--rm", 
+                                "--network", "none", 
+                                "--memory", "512m", 
+                                "--cpus", "0.5",
+                                "-v", f"{sandbox_dir}:/app", 
+                                "-w", "/app", 
+                                "python:3.10-slim", 
+                                "sh", "-c", command
+                            ]
+                            
+                            # Check if docker exists first
+                            try:
+                                subprocess.run(["docker", "--version"], capture_output=True, check=True)
+                                use_docker = True
+                            except (subprocess.CalledProcessError, FileNotFoundError):
+                                use_docker = False
+                                
+                            if use_docker:
+                                result = subprocess.run(docker_cmd, capture_output=True, text=True, timeout=60)
                             else:
-                                result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60)
+                                # Fallback to local execution if Docker is not installed (WARNING: Insecure)
+                                print(f"\033[91m[WARNING]\033[0m Docker not found. Falling back to local INSECURE execution in {sandbox_dir}")
+                                if os.name == 'nt':
+                                    result = subprocess.run(["powershell", "-Command", command], cwd=sandbox_dir, capture_output=True, text=True, timeout=60)
+                                else:
+                                    result = subprocess.run(command, shell=True, cwd=sandbox_dir, capture_output=True, text=True, timeout=60)
+                                    
                             stdout = result.stdout.strip()
                             stderr = result.stderr.strip()
                             output_msg = ""
@@ -414,7 +453,11 @@ print("hello")
                         
                         print(f"\033[93m[Coder]\033[0m Writing file: \033[96m{file_path}\033[0m")
                         try:
-                            abs_path = os.path.abspath(file_path)
+                            abs_path = os.path.abspath(os.path.join(sandbox_dir, file_path))
+                            # Security check: Prevent writing outside sandbox_dir via path traversal (e.g. ../../)
+                            if not abs_path.startswith(sandbox_dir):
+                                raise Exception(f"Path traversal detected! Denied access to {abs_path}")
+                                
                             os.makedirs(os.path.dirname(abs_path) or '.', exist_ok=True)
                             with open(abs_path, 'w', encoding='utf-8') as f:
                                 f.write(content)

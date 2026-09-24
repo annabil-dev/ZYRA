@@ -1,0 +1,75 @@
+====================================================================
+           ZYRA (MYTH PROTOCOL) - ARCHITECTURE REVISION PLAN v2.1
+====================================================================
+Berdasarkan hasil Security & Architecture Review, dokumen ini memuat 
+langkah-langkah teknis konkret untuk menambal kelemahan fatal pada 
+sistem ZYRA saat ini.
+
+--------------------------------------------------------------------
+1. CELAH KEAMANAN SANDBOXING (PRIORITAS: TINGGI)
+--------------------------------------------------------------------
+Masalah: Agen Coder saat ini mengeksekusi script Python langsung di 
+OS penambang (Miner). Ini sangat rentan terhadap serangan Malware/Zero-Day.
+
+Rencana Solusi:
+- Mengubah fungsi eksekusi di `zyra_cli.py`.
+- Mengimplementasikan Docker SDK API untuk Python.
+- Memaksa setiap kode AI berjalan di dalam "Ephemeral Docker Container" 
+  yang tidak memiliki akses root, tidak memiliki akses internet (network=none), 
+  dan dibatasi alokasi RAM/CPU-nya.
+
+--------------------------------------------------------------------
+2. AMBIGUITAS VALIDASI JURI (PRIORITAS: TINGGI)
+--------------------------------------------------------------------
+Masalah: Juri (Smart Judges) memvalidasi kebenaran kode secara 
+semantik menggunakan AI lokal (LLM). Ini sangat tidak akurat (non-deterministik).
+
+Rencana Solusi (TDD - Test Driven Development):
+- Planner Agent diinstruksikan untuk selalu meng-generate script 
+  Unit Test (`test_suite.py`) secara otomatis berdasarkan prompt User.
+- Coder Agent menulis kode utama (`main.py`).
+- Smart Judge TIDAK LAGI membaca kode secara semantik, melainkan 
+  mengeksekusi `pytest test_suite.py` di dalam Docker Sandbox lokalnya.
+- Jika tes matematis ini "PASS" (Hijau), maka konsensus valid. 
+  Ini merubah sistem menjadi Deterministik 100%.
+
+--------------------------------------------------------------------
+3. TOKENOMICS & SYBIL ATTACK (PRIORITAS: MENENGAH)
+--------------------------------------------------------------------
+Masalah: Pemilihan juri (Random Peers) tidak dijelaskan. Seorang hacker 
+bisa membuat 1000 node juri palsu untuk memvalidasi tugas buatannya sendiri 
+demi mencuri reward token. Istilah "deflationary" juga keliru karena 
+supply baru terus dicetak.
+
+Rencana Solusi:
+- Memperbarui Smart Contract Celo (`ZyraToken.sol`).
+- Menerapkan Staking Requirement: Untuk mendaftar sebagai Smart Judge 
+  di P2P Network, user WAJIB melakukan lock (stake) sejumlah token ZYRA.
+- Slashing: Jika Juri memberikan nilai PASS pada Unit Test yang terbukti 
+  salah oleh mayoritas, koin ZYRA yang di-stake akan dibakar.
+- Terminologi: Mengubah klaim "Strictly Deflationary" di Whitepaper 
+  menjadi "Capped Supply" (Maksimum 21 Juta Token).
+
+--------------------------------------------------------------------
+4. SENTRALISASI MEMPOOL TUGAS (PRIORITAS: MENENGAH)
+--------------------------------------------------------------------
+Masalah: Diagram menunjukkan Mempool sebagai antrean tugas. Saat ini 
+Mempool masih tersimpan di database SQLite lokal di Tracker Server.
+
+Rencana Solusi:
+- Memindahkan Mempool dari `server.py` menjadi struktur data terdistribusi 
+  di dalam jaringan Gossip P2P (Distributed Hash Table / DHT).
+- Node baru yang terhubung akan melakukan sinkronisasi Mempool secara 
+  langsung dari peers terdekatnya, mematikan fungsi sentral server.
+
+--------------------------------------------------------------------
+5. REVISI REDAKSI WHITEPAPER (SETELAH KODE SELESAI)
+--------------------------------------------------------------------
+- Memperbaiki terminologi IPFS (Menyebutkan ukuran pasti CIDv0).
+- Memisahkan penjelasan proses kompresi dengan penyimpanan payload IPFS.
+- Menjelaskan batasan eksekusi Sandbox (RAM, CPU, Jaringan).
+- Mengganti status proyek menjadi di bawah naungan "Myth Protocol".
+
+====================================================================
+Status Dokumen: Drafted (Siap dieksekusi tahap demi tahap)
+====================================================================

@@ -229,6 +229,30 @@ def submit_pouw():
         "validation_id": validation_id
     }), 200
 
+@app.route('/api/ipfs/upload', methods=['POST'])
+def upload_ipfs_endpoint():
+    """Allows Miners to upload trajectories to IPFS using the Server's Pinata API keys"""
+    data = request.json
+    if not data or 'trajectory' not in data:
+        return jsonify({"error": "Missing trajectory data"}), 400
+        
+    try:
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from app.utils.ipfs import upload_to_ipfs
+        
+        cid = upload_to_ipfs(data['trajectory'])
+        if cid:
+            print(f"[IPFS] Successfully pinned trajectory. CID: {cid}")
+            return jsonify({"cid": cid}), 200
+        else:
+            print(f"[IPFS] Failed to pin trajectory.")
+            return jsonify({"error": "IPFS upload failed internally"}), 500
+    except Exception as e:
+        print(f"[IPFS ERROR] {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/validator/get_task', methods=['GET'])
 def get_validation_task():
     """Validator requests a pending PoUW task to judge"""

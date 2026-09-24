@@ -4,7 +4,7 @@ const path = require('path');
 
 (async () => {
   console.log('Launching browser...');
-  const browser = await puppeteer.launch();
+  const browser = await puppeteer.launch({ protocolTimeout: 0 });
   const page = await browser.newPage();
   
   const filePath = `file://${path.resolve(__dirname, 'whitepaper_source.html')}`;
