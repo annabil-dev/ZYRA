@@ -70,8 +70,14 @@ class P2PNode:
         from urllib.parse import urlparse
         parsed = urlparse(self.tracker_url)
         relay_host = parsed.hostname or "localhost"
-        relay_port = int(os.environ.get("WS_RELAY_PORT", 5050))
-        relay_uri = f"ws://{relay_host}:{relay_port}"
+        
+        scheme = "wss" if parsed.scheme == "https" else "ws"
+        default_port = 443 if scheme == "wss" else 5050
+        relay_port = int(os.environ.get("WS_RELAY_PORT", default_port))
+        
+        relay_uri = f"{scheme}://{relay_host}"
+        if relay_port not in [80, 443]:
+            relay_uri += f":{relay_port}"
         
         while True:
             try:
