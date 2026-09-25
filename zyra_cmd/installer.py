@@ -46,8 +46,8 @@ def check_and_install_ollama():
     print("Ollama is required as the local engine for ZYRA CLI.")
     ans = input("\033[96mDo you want ZYRA to automatically download and install Ollama? (Y/n): \033[0m").strip().lower()
     if ans == 'n':
-        print("\033[93mInstallation cancelled. Exiting.\033[0m")
-        sys.exit(1)
+        print("\033[93mInstallation skipped. ZYRA will run in Client-Only mode.\033[0m")
+        return False
         
     if sys.platform.startswith("linux"):
         print("\n\033[94m[System]\033[0m Installing Ollama for Linux (may require sudo password)...")

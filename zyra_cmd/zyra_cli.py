@@ -807,18 +807,20 @@ def main():
     from zyra_cmd.installer import check_and_install_ollama, check_and_pull_model
     
     # Auto-Install Ollama Engine if missing
-    check_and_install_ollama()
+    has_ollama = check_and_install_ollama()
     
-    # Check and pull model if needed
-    final_model = check_and_pull_model(args.model)
-    if final_model:
-        args.model = final_model
-    
-    try:
-        llm = LocalLLMGenerator(model_name=args.model)
-    except Exception as e:
-        print(f"\033[91m[ERROR]\033[0m Failed to connect to Ollama. Make sure Ollama is running.")
-        sys.exit(1)
+    llm = None
+    if has_ollama:
+        # Check and pull model if needed
+        final_model = check_and_pull_model(args.model)
+        if final_model:
+            args.model = final_model
+        
+        try:
+            llm = LocalLLMGenerator(model_name=args.model)
+        except Exception as e:
+            print(f"\033[91m[ERROR]\033[0m Failed to connect to Ollama. Make sure Ollama is running.")
+            has_ollama = False
         
     history = []
         
@@ -1155,6 +1157,9 @@ os.system("start cmd /k zyra")
                         print("\033[91m[Error]\033[0m Invalid amount.\n")
                     continue
                 elif user_input.startswith('/automode '):
+                    if llm is None:
+                        print("\033[91m[Error]\033[0m Ollama is not installed. /automode requires a local LLM engine.\n")
+                        continue
                     task = user_input.split(' ', 1)[1].strip()
                     auto_yes = False
                     if task.startswith('-y '):
@@ -1315,6 +1320,9 @@ os.system("start cmd /k zyra")
                         print()
                     continue
                 elif cmd == '/mine':
+                    if llm is None:
+                        print("\033[91m[Error]\033[0m Ollama is not installed. /mine requires a local LLM engine.\n")
+                        continue
                     print("\n\033[93m[Miner]\033[0m Starting ZYRA Auto-Miner...")
                     print("\033[96m[System]\033[0m Scanning P2P Mempool for new tasks (Press Ctrl+C to stop)...\n")
                     target_wallet = wallet.metamask_address if hasattr(wallet, 'metamask_address') and wallet.metamask_address else wallet.address
@@ -1354,6 +1362,9 @@ os.system("start cmd /k zyra")
                     continue
                 
                 # If not a slash command, process as AI prompt
+                if llm is None:
+                    print("\033[91m[Error]\033[0m Ollama is not installed. You can only use Client commands (e.g. /submit). To use Local AI, restart and install Ollama.\n")
+                    continue
                 process_prompt(llm, user_input, history, wallet, ledger, llm.model_name)
                 
             except KeyboardInterrupt:

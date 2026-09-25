@@ -1,0 +1,102 @@
+========================================================================
+             ZYRA DEVELOPMENT & PROBLEM SOLVING LOG
+                         September 25, 2026
+========================================================================
+
+Berikut adalah catatan detail mengenai penyelesaian masalah (problem-solving)
+dan implementasi fitur pada arsitektur ZYRA Protocol:
+
+1. FIX: Bug Rebutan File Juri (Race Condition)
+--------------------------------------------------
+Masalah:
+CLI mengalami crash dengan pesan error `[Errno 2] No such file`.
+Akar masalahnya adalah adanya dua proses validasi yang berjalan paralel:
+worker background (Passive Judge) dan foreground loop. Keduanya mencoba
+mengekstrak dan memvalidasi file workspace yang sama persis di waktu
+yang bersamaan, sehingga terjadi tabrakan file I/O (Race Condition).
+
+Pemecahan:
+Menghapus secara total fungsi worker background (`p2p_judge_worker`)
+dari `zyra_cli.py`. Proses validasi sekarang menggunakan pola Singleton
+yang ditangani murni oleh main polling loop secara antre (sequential),
+sehingga sistem menjadi jauh lebih stabil tanpa ada bentrok file.
+
+
+2. FIX: Misteri "Ghost Task" di P2P Mempool
+--------------------------------------------------
+Masalah:
+Juri terus-menerus memvalidasi dan menolak task yang sama (contoh: 731921f4)
+berkali-kali setiap kali CLI di-restart. Task gagal ini (ghost task)
+tidak pernah benar-benar terhapus dari jaringan P2P.
+
+Pemecahan:
+Membuat dan mengimplementasikan protokol komunikasi baru yaitu
+`TRAJECTORY_UPDATED`. Ketika Juri menolak sebuah task, status rejection
+tersebut langsung di-broadcast ke seluruh node P2P. Dengan demikian,
+seluruh Miner di jaringan akan menghapus task sampah tersebut dari
+mempool RAM mereka. Selain itu, ditemukan juga bahwa ghost task ini 
+dipertahankan oleh proses "zombie" Miner ZYRA versi lama di VPS Linux.
+
+
+3. FEATURE: Auto-Correction Feedback Loop (Agentic Evolution)
+--------------------------------------------------
+Masalah (Saran Konseptual):
+Jika sebuah task ditolak karena kesalahan logika dari Coder Agent,
+mereset task tersebut menjadi `pending` akan membuat Miner berikutnya
+mengerjakan ulang secara buta dari nol, yang sangat tidak efisien.
+
+Pemecahan:
+Mengimplementasikan Auto-Correction Feedback Loop. Saat Smart Judge
+menolak sebuah trajectory, Judge akan menyisipkan alasan pasti penolakannya
+langsung ke dalam `prompt` task aslinya. Saat task kembali ke P2P Mempool,
+Miner selanjutnya akan membaca teguran/feedback tersebut dan menggunakannya
+sebagai referensi untuk melakukan perbaikan kode secara mandiri.
+
+
+4. FIX: Sinkronisasi Arsitektur & Redaksi Whitepaper
+--------------------------------------------------
+Masalah:
+Dokumen Whitepaper di Web UI masih merujuk pada integrasi "IPFS / Pinata Node",
+padahal arsitektur backend telah berevolusi menjadi murni P2P File Transfer.
+Judul whitepaper juga belum menggunakan nama entitas "Myth Protocol".
+
+Pemecahan:
+- Membersihkan referensi IPFS & Pinata dari `whitepaper_source.html`.
+- Mengganti deskripsi storage menjadi "P2P CIDv0 File Transfer".
+- Menambahkan spesifikasi Docker Sandbox (Isolated Network, 512MB RAM, CPU constraint).
+- Memperbaiki timeout rendering pada script Puppeteer (`generate_pdf.cjs`).
+- Merender ulang PDF menjadi versi final `v2.1`.
+
+
+5. FIX: Web Server Caching & Git Pull Issue
+--------------------------------------------------
+Masalah:
+Pembaruan UI web dan PDF tidak muncul di alamat publik (Tailscale VPS),
+meskipun file di lokal telah berhasil diubah dan dirender.
+
+Pemecahan:
+- Mengidentifikasi bahwa Node Web Server berjalan di VPS Linux (ardecserver),
+sedangkan pengeditan kode dilakukan di lokal Windows. 
+- Melakukan push otomatis via `publish.py` ke GitHub.
+- Menambahkan cache-busting logic (`?v=1`) pada file `App.jsx` agar browser
+pengguna dipaksa memuat dokumen PDF terbaru (bypass cache).
+
+
+6. DISKUSI: Game Theory, Tokenomics & Security Review
+--------------------------------------------------
+Catatan Konseptual:
+Telah dilakukan bedah arsitektur berdasarkan hasil ulasan (PDF Review)
+yang menyoroti celah Tokenomics dan Execution Security.
+
+Poin Diskusi:
+- Supply & Demand: Jaringan memiliki mekanisme Dynamic Fee Adjustment. Jika 
+  Miner terlalu banyak dan task kosong, biaya task turun drastis, memicu 
+  permintaan organik dari industri/developer.
+- Synthetic Tasks: Pada masa awal mainnet (bootstrapping), jaringan dapat
+  merilis task buatan agar Miner tetap dapat beroperasi (PoUW).
+- Keamanan Eksekusi: Mengevaluasi transisi dari Docker Container menuju 
+  isolasi MicroVM (contoh: Firecracker) untuk mencegah serangan Container Escape.
+- AI Validator: Membutuhkan model Multi-Model Voting dan mekanisme Staking
+  serta Slashing bagi node Juri yang memvalidasi secara asal-asalan.
+
+========================================================================

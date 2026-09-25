@@ -1,0 +1,69 @@
+========================================================================
+             ZYRA (MYTH PROTOCOL) - PDF REVIEW STATUS
+                         September 25, 2026
+========================================================================
+Dokumen ini memetakan hasil ulasan (PDF Review) terhadap Whitepaper ZYRA,
+serta menjelaskan secara detail status implementasi saat ini: mana yang
+SUDAH DISELESAIKAN (Existing Core) vs mana yang BELUM (Future Work).
+
+1. KEAMANAN EKSEKUSI (SANDBOXING)
+--------------------------------------------------
+[STATUS: SEBAGIAN SUDAH, PERLU UPGRADE]
+- YANG SUDAH KITA BIKIN:
+  Sistem saat ini sudah berhasil memaksa Coder Agent untuk mengeksekusi kode 
+  di dalam "Ephemeral Docker Sandbox". Lingkungan ini tidak memiliki akses 
+  internet (network=none), bukan akses root, dan RAM dibatasi maksimal 512MB.
+- YANG BELUM (TUNTUTAN REVIEWER):
+  Reviewer meminta agar sistem di-upgrade menggunakan teknologi "VM Isolation" 
+  (contoh: Firecracker MicroVM). Alasannya, Docker Container biasa masih rentan 
+  terhadap serangan tingkat lanjut (Container Escape) oleh hacker pro. Standar 
+  blockchain menuntut tingkat isolasi hardware-level.
+
+2. VALIDASI JURI (AI SMART JUDGE)
+--------------------------------------------------
+[STATUS: SEBAGIAN SUDAH, PERLU UPGRADE]
+- YANG SUDAH KITA BIKIN:
+  Jaringan sudah mengadopsi P2P Gossip Protocol di mana node yang bertugas 
+  sebagai Juri akan menarik workspace (CIDv0) dan memvalidasi Execution Trajectory 
+  menggunakan Local LLM (1 model) sebelum memberikan kriptografi Signature.
+- YANG BELUM (TUNTUTAN REVIEWER):
+  Reviewer memperingatkan bahwa satu model LLM bisa saja salah nilai (halusinasi/bias). 
+  Dibutuhkan implementasi Multi-Model Voting (Juri menggunakan >2 LLM secara 
+  paralel untuk voting hasil), benchmark testing khusus AI, serta sistem 
+  Reputasi/Slashing (penyitaan deposit token jika Juri terbukti salah/nakal).
+
+3. SPESIFIKASI NODE HARDWARE
+--------------------------------------------------
+[STATUS: BELUM ADA DETAIL]
+- YANG SUDAH KITA BIKIN:
+  Whitepaper baru sebatas menyatakan ZYRA dapat berjalan di atas "consumer-grade 
+  hardware" (hardware publik).
+- YANG BELUM (TUNTUTAN REVIEWER):
+  Belum ada dokumen standar rincian spesifikasi minimum hardware untuk 
+  menjalankan Swarm Intelligence. (Misal: Butuh VRAM GPU berapa GB untuk Ollama/
+  DeepSeek? RAM sistem minimal berapa? Tipe node seperti apa?).
+
+4. TOKENOMICS & MODEL EKONOMI
+--------------------------------------------------
+[STATUS: BELUM DIIMPLEMENTASI DI KODE]
+- YANG SUDAH KITA BIKIN (SECARA KONSEP):
+  Garis besar ekonomi sudah ada: Total supply 21 Juta $ZYRA. Client membayar fee 
+  untuk submit task, dan Miner/Juri dibayar atas kerja komputasinya (PoUW). 
+  Hukum Supply & Demand (Dynamic Fee) secara logika akan mengontrol ekosistem.
+- YANG BELUM (TUNTUTAN REVIEWER):
+  Belum ada formula matematis spesifik untuk algoritma Reward. Mekanisme 
+  Anti-Spam (pencegahan serangan DoS ke mempool), perhitungan sistem Staking, 
+  serta Penalty/Slashing secara Smart Contract belum terdefinisi.
+
+5. DOKUMENTASI TEKNIS & ROADMAP
+--------------------------------------------------
+[STATUS: SEBAGIAN SUDAH]
+- YANG SUDAH KITA BIKIN:
+  Whitepaper v2.1 sudah memuat konsep dasar arsitektur desentralisasi, P2P CIDv0, 
+  dan flow diagram ekosistem.
+- YANG BELUM (TUNTUTAN REVIEWER):
+  Reviewer meminta dokumen pendamping yang lebih detail: Technical Architecture 
+  Document (TAD) untuk developer core, Security Threat Model, dan jadwal rinci 
+  rencana Simulasi Testnet.
+
+========================================================================
