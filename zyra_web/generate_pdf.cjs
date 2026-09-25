@@ -11,7 +11,7 @@ const path = require('path');
   console.log(`Navigating to ${filePath}...`);
   
   try {
-    await page.goto(filePath, {waitUntil: 'networkidle2', timeout: 15000});
+    await page.goto(filePath, {waitUntil: 'domcontentloaded', timeout: 15000});
   } catch (e) {
     console.log('Navigation timeout hit, proceeding to PDF generation anyway...');
   }
@@ -24,7 +24,7 @@ const path = require('path');
     path: 'public/zyra_whitepaper_v2.0.pdf',
     format: 'A4',
     printBackground: true,
-    timeout: 0,
+    timeout: 30000,
     margin: { top: '0', right: '0', bottom: '0', left: '0' }
   });
   
