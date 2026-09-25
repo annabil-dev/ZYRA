@@ -34,14 +34,14 @@ Rencana Solusi (TDD - Test Driven Development):
   Ini merubah sistem menjadi Deterministik 100%.
 
 --------------------------------------------------------------------
-3. TOKENOMICS & SYBIL ATTACK (PRIORITAS: MENENGAH)
+3. TOKENOMICS & SYBIL ATTACK (PRIORITAS: MENENGAH) - STATUS: PERLU REVISI LAGI
 --------------------------------------------------------------------
 Masalah: Pemilihan juri (Random Peers) tidak dijelaskan. Seorang hacker 
 bisa membuat 1000 node juri palsu untuk memvalidasi tugas buatannya sendiri 
 demi mencuri reward token. Istilah "deflationary" juga keliru karena 
 supply baru terus dicetak.
 
-Rencana Solusi:
+Rencana Solusi (SEBAGIAN SELESAI, PERLU REVISI):
 - Memperbarui Smart Contract Celo (`ZyraToken.sol`).
 - Menerapkan Staking Requirement: Untuk mendaftar sebagai Smart Judge 
   di P2P Network, user WAJIB melakukan lock (stake) sejumlah token ZYRA.

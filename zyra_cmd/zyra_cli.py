@@ -141,18 +141,9 @@ def process_prompt(llm, prompt, history, wallet, ledger, model_name):
         "wallet": wallet.address,
         "timestamp": time.time()
     }
-    
-    print("\033[94m[IPFS]\033[0m Requesting Tracker Server to pin payload to Pinata...")
-    try:
-        res = requests.post(f"{BRIDGE_URL}/api/ipfs/upload", json={"trajectory": trajectory_data}, timeout=30)
-        res.raise_for_status()
-        cid = res.json().get("cid")
-    except Exception as e:
-        print(f"\033[91m[IPFS ERROR]\033[0m Could not upload via Tracker Server: {e}")
-        cid = None
-
-    if not cid:
-        cid = f"LOCAL_{uuid.uuid4().hex}"
+    # Generate a local CID for the trajectory (served via P2P, no centralized IPFS needed)
+    cid = f"LOCAL_{uuid.uuid4().hex}"
+        
         
     proof = PoUWValidator.generate_proof(
         task_type="AGENT_EXECUTION" if is_tool_call else "TEXT_GEN",
@@ -507,7 +498,7 @@ print("hello")
         print(f"\033[93m[Multi-Agent Swarm]\033[0m Reached maximum cycles. Stopping.\n")
 
     # Reward for automode
-    print("\033[93m[PoUW Validator]\033[0m Submitting Proof of Useful Work to ZYRA Bridge Server...")
+    print("\033[93m[PoUW Validator]\033[0m Submitting Proof of Useful Work to P2P Network...")
     
     import uuid
     import shutil
@@ -522,10 +513,8 @@ print("hello")
     
     cid = f"P2P_LOCAL_{uuid.uuid4().hex}"
     if 'p2p_node' in globals() and p2p_node:
-        print(f"[\033[96mDEBUG P2P\033[0m] Zipping workspace to {zip_path}...")
-        print(f"[\033[96mDEBUG P2P\033[0m] Current peers connected: {len(p2p_node.peers)}")
         if len(p2p_node.peers) == 0:
-            print("[\033[91mDEBUG P2P\033[0m] MINER IS NOT CONNECTED TO ANY P2P RELAY (0 peers)! Check Firewall Port 5050!")
+            print("[\033[91mWARNING\033[0m] MINER IS NOT CONNECTED TO ANY P2P RELAY (0 peers)! Check Firewall Port 5050!")
         p2p_node.seed_file(cid, zip_path)
     else:
         print("[\033[91mWARNING\033[0m] P2P Node not found. File will not be seeded.")
@@ -539,58 +528,70 @@ print("hello")
     )
     reward = proof.get('reward', 2.5)
     
-    # Send to Bridge Server for real Web3 Minting
     target_wallet = wallet.metamask_address if hasattr(wallet, 'metamask_address') and wallet.metamask_address else wallet.address
     if not target_wallet:
         target_wallet = wallet.address
         
     tx_hash = "Unknown"
     try:
-        response = requests.post(f"{BRIDGE_URL}/submit_pouw", json={
-            "user_wallet": target_wallet,
-            "trajectory_hash": proof.get('proof_hash', '0x0000'),
-            "task_id": task_id,
-            "reward": reward,
-            "trajectory_log": cid  # ONLY SEND THE CID (Hash)
-        }, timeout=30)
+        from p2p.protocol import MessageType, create_message
+        import asyncio
         
-        if response.status_code == 200:
-            data = response.json()
-            validation_id = data.get("validation_id", "Unknown")
-            print(f"\033[92m[SUCCESS]\033[0m Task submitted to Mempool! Status: \033[93mPending P2P Validation\033[0m")
-            print(f"Validation ID: \033[96m{validation_id}\033[0m")
-            print("Please wait for another ZYRA Node to judge your work. You can check the dashboard for updates.\n")
+        traj_hash = proof.get('proof_hash', f"0x{uuid.uuid4().hex}")
+        
+        # 1. Broadcast trajectory to P2P for judges to pick up
+        traj_payload = {
+            "trajectory_hash": traj_hash,
+            "task_id": task_id,
+            "wallet": target_wallet,
+            "trajectory_log": cid,
+            "reward": reward,
+            "status": "pending_validation"
+        }
+        p2p_node.trajectories[traj_hash] = traj_payload
+        traj_msg = create_message(MessageType.NEW_TRAJECTORY, traj_payload)
+        asyncio.run_coroutine_threadsafe(p2p_node.broadcast(traj_msg), p2p_node.loop)
+        
+        # 2. Update task status to "validating" in the P2P mempool
+        if task_id and task_id in p2p_node.tasks:
+            p2p_node.tasks[task_id]["status"] = "validating"
+            p2p_node.tasks[task_id]["result_cid"] = cid
+            p2p_node.tasks[task_id]["trajectory_hash"] = traj_hash
+            update_msg = create_message(MessageType.TASK_UPDATED, p2p_node.tasks[task_id])
+            asyncio.run_coroutine_threadsafe(p2p_node.broadcast(update_msg), p2p_node.loop)
+        
+        print(f"\033[92m[SUCCESS]\033[0m Task submitted to P2P Mempool! Status: \033[93mPending P2P Validation\033[0m")
+        print(f"Trajectory Hash: \033[96m{traj_hash[:16]}...\033[0m")
+        print("Waiting for Smart Judges to validate your work...\n")
+        
+        # Save local copy for /wallet history
+        ledger.add_pouw_reward(target_wallet, reward, proof)
+        
+        # Wait for validation result from P2P gossip (check signatures)
+        print("\033[93m[System]\033[0m Waiting for validation signatures from P2P network...")
+        try:
+            start_wait = time.time()
+            while time.time() - start_wait < 180:
+                sigs = p2p_node.signatures.get(traj_hash, [])
+                if len(sigs) >= 1:  # At least 1 judge validated
+                    print("\033[92m[System]\033[0m Validation completed by the network!\n")
+                    # Mark task as completed
+                    if task_id and task_id in p2p_node.tasks:
+                        p2p_node.tasks[task_id]["status"] = "completed"
+                        update_msg = create_message(MessageType.TASK_UPDATED, p2p_node.tasks[task_id])
+                        asyncio.run_coroutine_threadsafe(p2p_node.broadcast(update_msg), p2p_node.loop)
+                    break
+                time.sleep(3)
+            else:
+                print("\033[93m[System]\033[0m Validation timeout (3 min). Continuing anyway.\n")
+        except Exception:
+            pass
             
-            # Save local copy for /wallet history (as pending for now)
-            ledger.add_pouw_reward(target_wallet, reward, proof)
-            print("\n\033[93m[System]\033[0m Waiting for validation result from network before taking new tasks...")
-            try:
-                start_wait = time.time()
-                while time.time() - start_wait < 180:
-                    status_resp = requests.get(f"{BRIDGE_URL}/validation_status/{validation_id}", timeout=5)
-                    if status_resp.status_code == 200:
-                        val_status = status_resp.json().get("status")
-                        if val_status == "completed":
-                            print("\033[92m[System]\033[0m Validation completed by the network!\n")
-                            break
-                    time.sleep(5)
-            except Exception as e:
-                pass
-        elif response.status_code == 500 and response.json().get("status") == "validated_but_mint_failed":
-            error_msg = response.json().get("error", "Unknown blockchain error")
-            print(f"\033[93m[FALLBACK]\033[0m PoUW is Valid, but Blockchain minting failed ({error_msg}).")
-            print(f"\033[92m[SUCCESS]\033[0m \033[1m+{reward:.4f} ZYRA\033[0m safely saved to your Local Offline Wallet!\n")
-            ledger.add_pouw_reward(wallet.address, reward, proof)
-        else:
-            try:
-                error_text = response.json().get("error", response.text)
-            except:
-                error_text = response.text
-            print(f"\033[91m[REJECTED]\033[0m Bridge rejected PoUW: {error_text}\n")
-            
-    except requests.exceptions.RequestException as e:
-        print(f"\033[91m[BRIDGE OFFLINE]\033[0m Could not connect to ZYRA Bridge Server ({BRIDGE_URL}).")
-        print(f"Token reward failed. Please ensure the Bridge Server is running.\n")
+    except Exception as e:
+        print(f"\033[91m[P2P Error]\033[0m Could not broadcast to P2P network: {e}")
+        print(f"Saving reward to Local Offline Wallet as fallback.\n")
+        ledger.add_pouw_reward(wallet.address, reward, proof)
+        
         
     # Generate Audit Log File
     import datetime
@@ -622,62 +623,77 @@ try:
     def run_validator_mode(wallet: ZyraWallet, model_name: str):
         """
         Continuous looping mode to act as a P2P Smart Judge.
-        Fetches pending tasks from the mempool and judges them locally.
+        Scans P2P Mempool for pending trajectories and validates them locally.
         """
         print(f"\n\033[96m[AI Validator Node]\033[0m Starting P2P Smart Judge Mode...")
         print(f"Validator Wallet: \033[92m{wallet.address}\033[0m")
         print(f"Press \033[91mCtrl+C\033[0m to stop validating.\n")
         
         target_wallet = wallet.metamask_address if hasattr(wallet, 'metamask_address') and wallet.metamask_address else wallet.address
+        validated_trajs = set()  # Track what we already judged
         
         try:
             while True:
-                sys.stdout.write('\r\033[90mPolling for new tasks to validate...\033[0m')
+                sys.stdout.write('\r\033[90mPolling P2P Mempool for new tasks to validate...\033[0m')
                 sys.stdout.flush()
                 
-                try:
-                    # 1. Fetch pending task
-                    resp = requests.get(f"{BRIDGE_URL}/validator/get_task", timeout=10)
-                    if resp.status_code == 200:
-                        sys.stdout.write('\r\033[K') # Clear line
-                        task = resp.json()
-                        val_id = task['validation_id']
-                        miner = task['wallet']
-                        print(f"[\033[93mNEW TASK\033[0m] Found pending validation \033[96m{val_id[:8]}...\033[0m from Miner \033[95m{miner[:8]}...\033[0m")
+                # Scan P2P mempool for pending trajectories
+                found_traj = None
+                for traj_hash, traj_data in list(p2p_node.trajectories.items()):
+                    if traj_hash not in validated_trajs and traj_data.get("status") == "pending_validation":
+                        # Don't judge your own work
+                        if traj_data.get("wallet") != target_wallet:
+                            found_traj = (traj_hash, traj_data)
+                            break
+                
+                if found_traj:
+                    traj_hash, task = found_traj
+                    validated_trajs.add(traj_hash)
+                    
+                    sys.stdout.write('\r\033[K')  # Clear line
+                    miner = task.get('wallet', 'Unknown')
+                    print(f"[\033[93mNEW TASK\033[0m] Found pending validation \033[96m{traj_hash[:8]}...\033[0m from Miner \033[95m{miner[:8]}...\033[0m")
+                    
+                    # Evaluate locally
+                    p_node = p2p_node if 'p2p_node' in globals() else None
+                    is_valid, reason = PoUWValidator.evaluate_trajectory_with_llm(task['trajectory_log'], model_name, p_node)
+                    
+                    # Submit verdict via P2P
+                    print(f"[\033[96mAI Validator Node\033[0m] Submitting Verdict to P2P Network...")
+                    
+                    from p2p.protocol import MessageType, create_message
+                    import asyncio
+                    
+                    if is_valid:
+                        sig = wallet.sign_message(traj_hash) if hasattr(wallet, 'sign_message') else f"SIG_{wallet.address}_{traj_hash}"
+                        sig_payload = {
+                            "trajectory_hash": traj_hash,
+                            "judge_wallet": target_wallet,
+                            "signature": sig,
+                            "verdict": "VALID"
+                        }
+                        # Add signature locally and broadcast
+                        if traj_hash not in p2p_node.signatures:
+                            p2p_node.signatures[traj_hash] = []
+                        p2p_node.signatures[traj_hash].append(sig)
                         
-                        # 2. Evaluate locally
-                        global p2p_node
-                        p_node = p2p_node if 'p2p_node' in globals() else None
-                        is_valid, reason = PoUWValidator.evaluate_trajectory_with_llm(task['trajectory_log'], model_name, p_node)
+                        sig_msg = create_message(MessageType.VALIDATION_SIGNATURE, sig_payload)
+                        asyncio.run_coroutine_threadsafe(p2p_node.broadcast(sig_msg), p2p_node.loop)
                         
-                        # 3. Submit verdict
-                        print(f"[\033[96mAI Validator Node\033[0m] Submitting Verdict to Bridge Server...")
-                        verdict_resp = requests.post(f"{BRIDGE_URL}/validator/submit_verdict", json={
-                            "validation_id": val_id,
-                            "trajectory_hash": task.get('trajectory_hash'),
-                            "validator_wallet": target_wallet,
-                            "is_valid": is_valid,
-                            "reason": reason
-                        }, timeout=30)
+                        # Update task status to completed
+                        task_id = task.get("task_id")
+                        if task_id and task_id in p2p_node.tasks:
+                            p2p_node.tasks[task_id]["status"] = "completed"
+                            update_msg = create_message(MessageType.TASK_UPDATED, p2p_node.tasks[task_id])
+                            asyncio.run_coroutine_threadsafe(p2p_node.broadcast(update_msg), p2p_node.loop)
                         
-                        if verdict_resp.status_code == 200:
-                            vdata = verdict_resp.json()
-                            if is_valid:
-                                print(f"[\033[92mSUCCESS\033[0m] Validation accepted! Bridge Mint Tx: {vdata.get('tx_hash', 'Unknown')}\n")
-                            else:
-                                print(f"[\033[91mREJECTED\033[0m] Task failed validation. Reason: {reason}. Mempool cleared.\n")
-                        else:
-                            print(f"[\033[91mERROR\033[0m] Bridge rejected verdict submission: {verdict_resp.text}\n")
-                            
-                        # Brief pause before taking next task
-                        time.sleep(2)
+                        print(f"[\033[92mSUCCESS\033[0m] Validation PASSED and signature broadcasted to P2P network!\n")
                     else:
-                        # No tasks, sleep longer
-                        time.sleep(5)
-                except requests.exceptions.RequestException as e:
-                    sys.stdout.write('\r\033[K')
-                    print(f"[\033[91mConnection Error\033[0m] Could not reach Bridge Server at {BRIDGE_URL}. Retrying in 10s...")
-                    time.sleep(10)
+                        print(f"[\033[91mREJECTED\033[0m] Task failed validation. Reason: {reason}. Mempool cleared.\n")
+                    
+                    time.sleep(2)
+                else:
+                    time.sleep(5)
                     
         except KeyboardInterrupt:
             sys.stdout.write('\r\033[K')
@@ -761,12 +777,11 @@ def main():
     p2p_node = P2PNode(port=p2p_port, tracker_url=args.tracker, seed_peer=args.seed_peer)
     
     def p2p_judge_worker(payload):
-        from app.utils.ipfs import fetch_from_ipfs
         from ai.blockchain.pouw_validator import PoUWValidator
         import threading
         
         def run_validation():
-            cid = payload.get("cid")
+            cid = payload.get("trajectory_log") or payload.get("cid")
             traj_hash = payload.get("trajectory_hash")
             
             if not cid:
@@ -774,22 +789,12 @@ def main():
                 
             print(f"\n\033[93m[Smart Judge]\033[0m Validating incoming Trajectory from {payload.get('wallet')} (CID: {cid})")
             
-            trajectory_data = fetch_from_ipfs(cid)
-            if not trajectory_data:
-                print(f"\033[91m[Smart Judge]\033[0m Failed to fetch CID {cid} from IPFS.")
-                return
-                
-            log_list = trajectory_data.get("full_log", [])
-            if not log_list:
-                log_list = trajectory_data.get("history", [])
-                log_list.append({"role": "assistant", "content": trajectory_data.get("response", "")})
-                
-            is_valid, verdict_text = PoUWValidator.evaluate_trajectory_with_llm(log_list, model_name="llama3.2:1b")
+            p_node = p2p_node if 'p2p_node' in globals() else None
+            is_valid, verdict_text = PoUWValidator.evaluate_trajectory_with_llm(cid, model_name="llama3.2:1b", p2p_node=p_node)
             
             print(f"\033[96m[Smart Judge Verdict]\033[0m {verdict_text} ({traj_hash})")
             
             if is_valid:
-                # Wallet needs sign_message, if not present we do a dummy sig
                 sig = wallet.sign_message(traj_hash) if hasattr(wallet, 'sign_message') else f"SIG_{wallet.address}_{traj_hash}"
                 sig_payload = {
                     "trajectory_hash": traj_hash,
@@ -799,18 +804,19 @@ def main():
                 }
                 p2p_node.add_signature(sig_payload)
                 
-                # Submit to Bridge Relayer for Minting
-                try:
-                    import requests
-                    bridge_url = args.tracker # The tracker is also the bridge server
-                    requests.post(f"{bridge_url}/validator/submit_verdict", json={
-                        "trajectory_hash": traj_hash,
-                        "validator_wallet": wallet.address,
-                        "is_valid": True,
-                        "reason": "Validated locally via IPFS"
-                    }, timeout=10)
-                except Exception as e:
-                    print(f"\033[91m[Smart Judge]\033[0m Failed to relay verdict to bridge: {e}")
+                # Broadcast signature via P2P (no bridge needed)
+                from p2p.protocol import MessageType, create_message
+                import asyncio
+                sig_msg = create_message(MessageType.VALIDATION_SIGNATURE, sig_payload)
+                asyncio.run_coroutine_threadsafe(p2p_node.broadcast(sig_msg), p2p_node.loop)
+                
+                # Update task status to completed in P2P mempool
+                task_id = payload.get("task_id")
+                if task_id and task_id in p2p_node.tasks:
+                    p2p_node.tasks[task_id]["status"] = "completed"
+                    update_msg = create_message(MessageType.TASK_UPDATED, p2p_node.tasks[task_id])
+                    asyncio.run_coroutine_threadsafe(p2p_node.broadcast(update_msg), p2p_node.loop)
+                
                 
         threading.Thread(target=run_validation, daemon=True).start()
 
@@ -1189,65 +1195,68 @@ else:
                         print("\033[91m[Error]\033[0m Harap masukkan tugas. Contoh: /submit Buat aplikasi python...\n")
                         continue
                     
-                    print(f"\033[93m[Network]\033[0m Mengirim tugas ke Mempool (Bridge Server: {BRIDGE_URL})...")
+                    print(f"\033[93m[Network]\033[0m Mengirim tugas ke P2P Mempool...")
                     try:
-                        resp = requests.post(f"{BRIDGE_URL}/client/submit_task", json={
+                        import uuid
+                        import asyncio
+                        from p2p.protocol import MessageType, create_message
+                        
+                        task_id = str(uuid.uuid4())
+                        task_payload = {
+                            "task_id": task_id,
                             "prompt": task_prompt,
-                            "reward": 2.5
-                        }, timeout=10)
-                        if resp.status_code == 201:
-                            data = resp.json()
-                            print(f"\033[92m[Success]\033[0m Tugas berhasil dilempar ke jaringan!")
-                            print(f"Task ID: \033[96m{data.get('task_id')}\033[0m")
-                            print("Sekarang tinggal tunggu para Miner di jaringan untuk mengerjakan tugas ini.\n")
-                            
-                            # Start background thread to poll for completion
-                            def wait_for_task(task_id):
-                                print(f"\033[93m[Client]\033[0m Menunggu hasil validasi dari jaringan...")
-                                while True:
-                                    try:
-                                        r = requests.get(f"{BRIDGE_URL}/client/task_status/{task_id}", timeout=5)
-                                        if r.status_code == 200:
-                                            res = r.json()
-                                            if res.get("status") == "completed":
-                                                cid = res.get("result_cid")
-                                                print(f"\n\033[92m[Client]\033[0m Tugas {task_id} selesai! Mengunduh hasil (CID: {cid})...")
-                                                
-                                                import asyncio
-                                                import tempfile
-                                                
-                                                dest_zip = os.path.join(os.getcwd(), f"zyra_result_{task_id[:8]}.zip")
-                                                
-                                                # Use threadsafe coroutine to request file
-                                                future = asyncio.run_coroutine_threadsafe(
-                                                    p2p_node.request_file(cid, dest_zip), 
-                                                    p2p_node.loop
-                                                )
-                                                
-                                                try:
-                                                    future.result(timeout=120)
-                                                    print(f"\033[92m[Success]\033[0m File berhasil diunduh ke: {dest_zip}")
-                                                    # Extract it
-                                                    extract_dir = os.path.join(os.getcwd(), f"zyra_workspace_{task_id[:8]}")
-                                                    import zipfile
-                                                    with zipfile.ZipFile(dest_zip, 'r') as zip_ref:
-                                                        zip_ref.extractall(extract_dir)
-                                                    print(f"\033[92m[Success]\033[0m Workspace diekstrak di: {extract_dir}\nZYRA > ", end="", flush=True)
-                                                except Exception as e:
-                                                    print(f"\n\033[91m[Client Error]\033[0m Gagal mengunduh file via P2P: {e}\nZYRA > ", end="", flush=True)
-                                                
-                                                break
-                                    except Exception:
-                                        pass
-                                    import time
-                                    time.sleep(5)
+                            "reward": 2.5,
+                            "status": "pending",
+                            "client": wallet.metamask_address or wallet.address
+                        }
+                        
+                        # Simpan di local mempool
+                        p2p_node.tasks[task_id] = task_payload
+                        
+                        # Broadcast ke jaringan P2P
+                        msg = create_message(MessageType.NEW_TASK, task_payload)
+                        asyncio.run_coroutine_threadsafe(p2p_node.broadcast(msg), p2p_node.loop)
+                        
+                        print(f"\033[92m[Success]\033[0m Tugas berhasil dilempar ke P2P Mempool!")
+                        print(f"Task ID: \033[96m{task_id}\033[0m")
+                        print("Sekarang tinggal tunggu para Miner di jaringan untuk mengerjakan tugas ini.\n")
+                        
+                        # Start background thread to poll for completion from P2P mempool
+                        def wait_for_task(tid):
+                            print(f"\033[93m[Client]\033[0m Menunggu hasil validasi dari jaringan P2P...")
+                            import time
+                            while True:
+                                task_info = p2p_node.tasks.get(tid, {})
+                                if task_info.get("status") == "completed":
+                                    cid = task_info.get("result_cid")
+                                    print(f"\n\033[92m[Client]\033[0m Tugas {tid} selesai! Mengunduh hasil (CID: {cid})...")
                                     
-                            threading.Thread(target=wait_for_task, args=(data.get('task_id'),), daemon=True).start()
-                        else:
-                            print(f"\033[91m[Error]\033[0m Gagal submit: {resp.text}\n")
-                    except requests.exceptions.RequestException as e:
-                        print(f"\033[91m[Connection Error]\033[0m Tidak bisa terhubung ke Bridge Server ({BRIDGE_URL}).")
-                        print("Pastikan konfigurasi URL Tracker sudah benar lewat perintah /config.\n")
+                                    dest_zip = os.path.join(os.getcwd(), f"zyra_result_{tid[:8]}.zip")
+                                    
+                                    # Use threadsafe coroutine to request file
+                                    future = asyncio.run_coroutine_threadsafe(
+                                        p2p_node.request_file(cid, dest_zip), 
+                                        p2p_node.loop
+                                    )
+                                    
+                                    try:
+                                        future.result(timeout=120)
+                                        print(f"\033[92m[Success]\033[0m File berhasil diunduh ke: {dest_zip}")
+                                        # Extract it
+                                        extract_dir = os.path.join(os.getcwd(), f"zyra_workspace_{tid[:8]}")
+                                        import zipfile
+                                        with zipfile.ZipFile(dest_zip, 'r') as zip_ref:
+                                            zip_ref.extractall(extract_dir)
+                                        print(f"\033[92m[Success]\033[0m Workspace diekstrak di: {extract_dir}\nZYRA > ", end="", flush=True)
+                                    except Exception as e:
+                                        print(f"\n\033[91m[Client Error]\033[0m Gagal mengunduh file via P2P: {e}\nZYRA > ", end="", flush=True)
+                                    
+                                    break
+                                time.sleep(2)
+                                
+                        threading.Thread(target=wait_for_task, args=(task_id,), daemon=True).start()
+                    except Exception as e:
+                        print(f"\033[91m[Error]\033[0m Gagal submit ke P2P: {e}\n")
                     continue
                 elif cmd == '/deploy':
                     print("\n\033[93m[System]\033[0m Starting Auto-Deploy to Localhost...")
@@ -1331,28 +1340,39 @@ else:
                     continue
                 elif cmd == '/mine':
                     print("\n\033[93m[Miner]\033[0m Starting ZYRA Auto-Miner...")
-                    print("\033[96m[System]\033[0m Polling network for new tasks (Press Ctrl+C to stop)...\n")
+                    print("\033[96m[System]\033[0m Scanning P2P Mempool for new tasks (Press Ctrl+C to stop)...\n")
                     target_wallet = wallet.metamask_address if hasattr(wallet, 'metamask_address') and wallet.metamask_address else wallet.address
                     if not target_wallet: target_wallet = wallet.address
                     
                     try:
                         import time
+                        from p2p.protocol import MessageType, create_message
+                        import asyncio
                         while True:
-                            try:
-                                resp = requests.get(f"{BRIDGE_URL}/miner/get_task", params={"wallet": target_wallet}, timeout=5)
-                                if resp.status_code == 200:
-                                    task_data = resp.json()
-                                    task_id = task_data.get("task_id")
-                                    prompt = task_data.get("prompt")
-                                    reward = task_data.get("reward")
-                                    print(f"\n\033[92m[Network]\033[0m Found Task! Reward: {reward} ZYRA")
-                                    run_automode(llm, prompt, history, wallet, ledger, llm.model_name, auto_yes=True, planner_model=args.planner_model, coder_model=args.coder_model, task_id=task_id)
-                                    print("\n\033[96m[System]\033[0m Polling network for next task...\n")
-                                else:
-                                    time.sleep(10) # Wait 10 seconds before polling again
-                            except requests.exceptions.RequestException:
-                                print(f"\033[91m[Error]\033[0m Cannot connect to Bridge Server. Retrying in 10s...")
-                                time.sleep(10)
+                            # Scan local P2P mempool for pending tasks
+                            found_task = None
+                            for tid, tdata in list(p2p_node.tasks.items()):
+                                if tdata.get("status") == "pending":
+                                    found_task = tdata
+                                    break
+                            
+                            if found_task:
+                                task_id = found_task.get("task_id")
+                                prompt = found_task.get("prompt")
+                                reward = found_task.get("reward", 2.5)
+                                
+                                # Claim the task by updating status in P2P
+                                p2p_node.tasks[task_id]["status"] = "mining"
+                                p2p_node.tasks[task_id]["miner"] = target_wallet
+                                update_msg = create_message(MessageType.TASK_UPDATED, p2p_node.tasks[task_id])
+                                asyncio.run_coroutine_threadsafe(p2p_node.broadcast(update_msg), p2p_node.loop)
+                                
+                                print(f"\n\033[92m[P2P Mempool]\033[0m Found Task! Reward: {reward} ZYRA")
+                                print(f"Task ID: \033[96m{task_id}\033[0m")
+                                run_automode(llm, prompt, history, wallet, ledger, llm.model_name, auto_yes=True, planner_model=args.planner_model, coder_model=args.coder_model, task_id=task_id)
+                                print("\n\033[96m[System]\033[0m Scanning P2P Mempool for next task...\n")
+                            else:
+                                time.sleep(5) # No pending tasks, wait 5 seconds
                     except KeyboardInterrupt:
                         print("\n\033[93m[Miner]\033[0m Auto-Miner stopped.\033[0m\n")
                     continue

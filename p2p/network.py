@@ -198,6 +198,27 @@ class P2PNode:
                 self.tasks[task_id] = payload
                 await self.broadcast(raw_msg_str, exclude=websocket)
                 
+        elif msg_type == MessageType.TASK_UPDATED:
+            task_id = payload.get("task_id")
+            if task_id in self.tasks:
+                current_status = self.tasks[task_id].get("status")
+                new_status = payload.get("status")
+                
+                # Only update if status changed, to avoid infinite broadcast loops
+                # Also accept updates like result_cid
+                needs_update = False
+                for k, v in payload.items():
+                    if self.tasks[task_id].get(k) != v:
+                        self.tasks[task_id][k] = v
+                        needs_update = True
+                
+                if needs_update:
+                    logging.info(f"Received TASK_UPDATED: {task_id} -> {new_status}")
+                    await self.broadcast(raw_msg_str, exclude=websocket)
+            else:
+                self.tasks[task_id] = payload
+                await self.broadcast(raw_msg_str, exclude=websocket)
+                
         elif msg_type == MessageType.NEW_TRAJECTORY:
             traj_hash = payload.get("trajectory_hash")
             if traj_hash not in self.trajectories:
