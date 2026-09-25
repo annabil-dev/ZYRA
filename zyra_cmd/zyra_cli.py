@@ -939,10 +939,8 @@ def main():
                                 print(f"\033[93m[Update Tersedia]\033[0m Versi terbaru: \033[1m{latest_version}\033[0m (Versi lu: {cli_version})")
                                 choice = input("Update sekarang dan otomatis restart? [Y/n]: ").strip().lower()
                                 if choice != 'n':
-                                    import subprocess
-                                    import os
-                                    import sys
-                                    
+                                
+
                                     if os.name == 'nt':
                                         import tempfile
                                         # Windows: Locked files, need background script
