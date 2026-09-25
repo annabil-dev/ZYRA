@@ -40,7 +40,7 @@ if global_env_path.exists():
 # Fallback to package root
 dotenv.load_dotenv(str(Path(__file__).resolve().parent.parent / '.env'))
 
-BRIDGE_URL = os.environ.get("ZYRA_BRIDGE_URL", "http://127.0.0.1:5000") # Default to localhost instead of pinggy to prevent offline errors during development
+BRIDGE_URL = os.environ.get("ZYRA_BRIDGE_URL", "https://zyra-ai.tail3b049d.ts.net") # Hardcoded Global Bootstrap Node (Mythchain Alpha Tracker)
 
 def print_animated(text):
     for char in text:
@@ -1052,7 +1052,7 @@ os.system("start cmd /k zyra")
                     print("\033[94m[ZYRA Config]\033[0m")
                     model = input("\033[90mSelect Local Planner Model (e.g. llama3.1:8b): \033[0m")
                     addr = input("\033[90mEnter EVM Wallet Address: \033[0m")
-                    bridge = input("\033[90mEnter Tracker Server URL (default: http://127.0.0.1:5000): \033[0m")
+                    bridge = input("\033[90mEnter Tracker Server URL (default: https://zyra-ai.tail3b049d.ts.net): \033[0m")
                     
                     global_env_dir = Path.home() / ".zyra"
                     global_env_dir.mkdir(parents=True, exist_ok=True)

@@ -71,5 +71,19 @@ Rencana Solusi (SELESAI):
 - [x] Mengganti status proyek menjadi di bawah naungan "Myth Protocol".
 
 ====================================================================
-Status Dokumen: COMPLETED (Seluruh roadmap arsitektur telah selesai!)
+6. AUTO-CONNECT TRACKER (BOOTSTRAP NODE) - PRIORITAS: TINGGI
+====================================================================
+Masalah: User masih harus secara manual mengetik /config untuk
+terhubung ke jaringan publik ZYRA (Tracker URL). Ini tidak ramah 
+pengguna dan bertentangan dengan prinsip "plug and play".
+
+Rencana Solusi:
+- Menjadikan domain `https://zyra-ai.tail3b049d.ts.net` (ardecserver) 
+  sebagai "Hardcoded Bootstrap Node / Seed Node" bawaan (default) di 
+  dalam source code `zyra_cli.py`.
+- Sehingga ketika instalasi baru dilakukan, user otomatis masuk ke 
+  dalam Global Swarm tanpa perlu konfigurasi tambahan.
+
+====================================================================
+Status Dokumen: COMPLETED (Menunggu eksekusi Bootstrap Node)
 ====================================================================
