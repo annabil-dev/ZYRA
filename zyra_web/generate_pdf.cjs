@@ -21,13 +21,13 @@ const path = require('path');
   
   console.log('Generating PDF...');
   await page.pdf({
-    path: 'public/zyra_whitepaper_v2.0.pdf',
+    path: 'public/zyra_whitepaper_v2.1.pdf',
     format: 'A4',
     printBackground: true,
     timeout: 30000,
     margin: { top: '0', right: '0', bottom: '0', left: '0' }
   });
   
-  console.log('PDF generated at public/zyra_whitepaper_v2.0.pdf');
+  console.log('PDF generated at public/zyra_whitepaper_v2.1.pdf');
   await browser.close();
 })();
