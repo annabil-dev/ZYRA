@@ -91,8 +91,15 @@ def init_db():
             status TEXT NOT NULL DEFAULT 'pending',
             created_at REAL NOT NULL,
             completed_by TEXT,
-            completed_at REAL
+            completed_at REAL,
+            result_cid TEXT
         )
+    ''')
+    try:
+        c.execute("ALTER TABLE tasks ADD COLUMN result_cid TEXT")
+    except sqlite3.OperationalError:
+        pass
+        
     ''')
     c.execute('''
         CREATE TABLE IF NOT EXISTS pending_validations (
@@ -344,6 +351,12 @@ def submit_verdict():
     task_id = task['task_id']
     
     c.execute('DELETE FROM pending_validations WHERE id = ?', (validation_id,))
+    
+    # Update tasks table to mark as completed and store the result CID
+    result_cid = task['trajectory_log']
+    c.execute('UPDATE tasks SET status = "completed", completed_by = ?, completed_at = ?, result_cid = ? WHERE id = ?', 
+              (miner_wallet, time.time(), result_cid, task_id))
+              
     conn.commit()
     conn.close()
     
@@ -474,6 +487,26 @@ def network_stats():
         return jsonify({
             "active_nodes": len(registered_peers) + 1,  # +1 for the tracker itself
             "mempool_size": mempool_size
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/client/task_status/<task_id>', methods=['GET'])
+def get_task_status(task_id):
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute('SELECT status, result_cid FROM tasks WHERE id = ?', (task_id,))
+        task = c.fetchone()
+        conn.close()
+        
+        if not task:
+            return jsonify({"error": "Task not found"}), 404
+            
+        return jsonify({
+            "status": task['status'],
+            "result_cid": task['result_cid']
         }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500

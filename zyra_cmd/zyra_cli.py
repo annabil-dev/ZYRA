@@ -1121,6 +1121,49 @@ def main():
                             print(f"\033[92m[Success]\033[0m Tugas berhasil dilempar ke jaringan!")
                             print(f"Task ID: \033[96m{data.get('task_id')}\033[0m")
                             print("Sekarang tinggal tunggu para Miner di jaringan untuk mengerjakan tugas ini.\n")
+                            
+                            # Start background thread to poll for completion
+                            def wait_for_task(task_id):
+                                print(f"\033[93m[Client]\033[0m Menunggu hasil validasi dari jaringan...")
+                                while True:
+                                    try:
+                                        r = requests.get(f"{BRIDGE_URL}/client/task_status/{task_id}", timeout=5)
+                                        if r.status_code == 200:
+                                            res = r.json()
+                                            if res.get("status") == "completed":
+                                                cid = res.get("result_cid")
+                                                print(f"\n\033[92m[Client]\033[0m Tugas {task_id} selesai! Mengunduh hasil (CID: {cid})...")
+                                                
+                                                import asyncio
+                                                import tempfile
+                                                
+                                                dest_zip = os.path.join(os.getcwd(), f"zyra_result_{task_id[:8]}.zip")
+                                                
+                                                # Use threadsafe coroutine to request file
+                                                future = asyncio.run_coroutine_threadsafe(
+                                                    p2p_node.request_file(cid, dest_zip), 
+                                                    p2p_node.loop
+                                                )
+                                                
+                                                try:
+                                                    future.result(timeout=120)
+                                                    print(f"\033[92m[Success]\033[0m File berhasil diunduh ke: {dest_zip}")
+                                                    # Extract it
+                                                    extract_dir = os.path.join(os.getcwd(), f"zyra_workspace_{task_id[:8]}")
+                                                    import zipfile
+                                                    with zipfile.ZipFile(dest_zip, 'r') as zip_ref:
+                                                        zip_ref.extractall(extract_dir)
+                                                    print(f"\033[92m[Success]\033[0m Workspace diekstrak di: {extract_dir}\nZYRA > ", end="", flush=True)
+                                                except Exception as e:
+                                                    print(f"\n\033[91m[Client Error]\033[0m Gagal mengunduh file via P2P: {e}\nZYRA > ", end="", flush=True)
+                                                
+                                                break
+                                    except Exception:
+                                        pass
+                                    import time
+                                    time.sleep(5)
+                                    
+                            threading.Thread(target=wait_for_task, args=(data.get('task_id'),), daemon=True).start()
                         else:
                             print(f"\033[91m[Error]\033[0m Gagal submit: {resp.text}\n")
                     except requests.exceptions.RequestException as e:
