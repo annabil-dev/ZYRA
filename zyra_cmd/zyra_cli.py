@@ -654,6 +654,28 @@ try:
         print(f"Press \033[91mCtrl+C\033[0m to stop validating.\n")
         
         target_wallet = wallet.metamask_address if hasattr(wallet, 'metamask_address') and wallet.metamask_address else wallet.address
+        
+        # --- SYBIL RESISTANCE (STAKING CHECK) ---
+        import os
+        contract_addr = os.environ.get("ZYRA_CONTRACT_ADDRESS")
+        if contract_addr and target_wallet.startswith("0x"):
+            try:
+                from zyra_cmd.web3_bridge import ZyraWeb3Bridge
+                bridge = ZyraWeb3Bridge()
+                bridge.set_contract_address(contract_addr)
+                staked_bal = bridge.get_staked_balance(target_wallet)
+                if staked_bal < 10.0:
+                    print(f"\033[91m[Access Denied]\033[0m You need to stake at least 10 ZYRA to become a Smart Judge.")
+                    print(f"Your current staked balance: {staked_bal:.2f} ZYRA.")
+                    print(f"Use \033[93m/stake 10\033[0m to lock your tokens.\n")
+                    return
+                print(f"\033[92m[Verified]\033[0m Judge Stake Confirmed: {staked_bal:.2f} ZYRA locked.")
+            except Exception as e:
+                print(f"\033[91m[Warning]\033[0m Could not verify staked balance on Celo: {e}")
+        else:
+            print(f"\033[93m[Warning]\033[0m Contract Address or MetaMask not linked. Skipping on-chain stake verification for prototype testing.")
+        # ----------------------------------------
+        
         validated_trajs = set()  # Track what we already judged
         
         try:
@@ -1177,6 +1199,37 @@ os.system("start cmd /k zyra")
                             print(f"\033[96m[TxHash]\033[0m {tx_hash}\n")
                         except Exception as e:
                             print(f"\033[91m[Web3 Error]\033[0m {e}\n(Pastikan wallet EVM anda {wallet.metamask_address or 'lokal'} memiliki saldo CELO untuk gas)\n")
+                    except ValueError:
+                        print("\033[91m[Error]\033[0m Invalid amount.\n")
+                    continue
+                elif user_input.startswith('/unstake '):
+                    parts = user_input.split(' ', 1)
+                    if len(parts) < 2:
+                        print("\033[91m[Error]\033[0m Usage: /unstake <amount>\n")
+                        continue
+                    try:
+                        amount = float(parts[1].strip())
+                        if amount <= 0:
+                            print("\033[91m[Error]\033[0m Amount must be positive.\n")
+                            continue
+                            
+                        print(f"\033[94m[System]\033[0m Initiating Unstaking transaction for {amount} ZYRA...")
+                        try:
+                            from zyra_cmd.web3_bridge import ZyraWeb3Bridge
+                            bridge = ZyraWeb3Bridge()
+                            
+                            contract_addr = os.environ.get("ZYRA_CONTRACT_ADDRESS")
+                            if not contract_addr:
+                                print("\033[91m[Error]\033[0m ZYRA_CONTRACT_ADDRESS tidak ditemukan di .env!\n")
+                                continue
+                                
+                            bridge.set_contract_address(contract_addr)
+                            tx_hash = bridge.unstake(wallet.private_key, amount)
+                            
+                            print(f"\033[92m[System]\033[0m Unstaking successful!")
+                            print(f"\033[96m[TxHash]\033[0m {tx_hash}\n")
+                        except Exception as e:
+                            print(f"\033[91m[Web3 Error]\033[0m {e}\n(Pastikan wallet EVM anda memiliki saldo CELO untuk gas)\n")
                     except ValueError:
                         print("\033[91m[Error]\033[0m Invalid amount.\n")
                     continue
