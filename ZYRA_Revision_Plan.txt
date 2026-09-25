@@ -63,13 +63,13 @@ Rencana Solusi (SELESAI):
   langsung dari peers terdekatnya, mematikan fungsi sentral server.
 
 --------------------------------------------------------------------
-5. REVISI REDAKSI WHITEPAPER (SETELAH KODE SELESAI)
+5. REVISI REDAKSI WHITEPAPER (STATUS: SELESAI)
 --------------------------------------------------------------------
-- Memperbaiki terminologi IPFS (Menyebutkan ukuran pasti CIDv0).
-- Memisahkan penjelasan proses kompresi dengan penyimpanan payload IPFS.
-- Menjelaskan batasan eksekusi Sandbox (RAM, CPU, Jaringan).
-- Mengganti status proyek menjadi di bawah naungan "Myth Protocol".
+- [x] Memperbaiki terminologi IPFS (Menyebutkan ukuran pasti CIDv0).
+- [x] Memisahkan penjelasan proses kompresi dengan penyimpanan payload IPFS (berpindah ke P2P File Seeding tanpa Pinata).
+- [x] Menjelaskan batasan eksekusi Sandbox (RAM, CPU, Jaringan).
+- [x] Mengganti status proyek menjadi di bawah naungan "Myth Protocol".
 
 ====================================================================
-Status Dokumen: Drafted (Siap dieksekusi tahap demi tahap)
+Status Dokumen: COMPLETED (Seluruh roadmap arsitektur telah selesai!)
 ====================================================================

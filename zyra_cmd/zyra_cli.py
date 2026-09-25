@@ -776,51 +776,7 @@ def main():
     p2p_port = random.randint(5001, 5999)
     p2p_node = P2PNode(port=p2p_port, tracker_url=args.tracker, seed_peer=args.seed_peer)
     
-    def p2p_judge_worker(payload):
-        from ai.blockchain.pouw_validator import PoUWValidator
-        import threading
-        
-        def run_validation():
-            cid = payload.get("trajectory_log") or payload.get("cid")
-            traj_hash = payload.get("trajectory_hash")
-            
-            if not cid:
-                return
-                
-            print(f"\n\033[93m[Smart Judge]\033[0m Validating incoming Trajectory from {payload.get('wallet')} (CID: {cid})")
-            
-            p_node = p2p_node if 'p2p_node' in globals() else None
-            is_valid, verdict_text = PoUWValidator.evaluate_trajectory_with_llm(cid, model_name="llama3.2:1b", p2p_node=p_node)
-            
-            print(f"\033[96m[Smart Judge Verdict]\033[0m {verdict_text} ({traj_hash})")
-            
-            if is_valid:
-                sig = wallet.sign_message(traj_hash) if hasattr(wallet, 'sign_message') else f"SIG_{wallet.address}_{traj_hash}"
-                sig_payload = {
-                    "trajectory_hash": traj_hash,
-                    "judge_wallet": wallet.address,
-                    "signature": sig,
-                    "verdict": "VALID"
-                }
-                p2p_node.add_signature(sig_payload)
-                
-                # Broadcast signature via P2P (no bridge needed)
-                from p2p.protocol import MessageType, create_message
-                import asyncio
-                sig_msg = create_message(MessageType.VALIDATION_SIGNATURE, sig_payload)
-                asyncio.run_coroutine_threadsafe(p2p_node.broadcast(sig_msg), p2p_node.loop)
-                
-                # Update task status to completed in P2P mempool
-                task_id = payload.get("task_id")
-                if task_id and task_id in p2p_node.tasks:
-                    p2p_node.tasks[task_id]["status"] = "completed"
-                    update_msg = create_message(MessageType.TASK_UPDATED, p2p_node.tasks[task_id])
-                    asyncio.run_coroutine_threadsafe(p2p_node.broadcast(update_msg), p2p_node.loop)
-                
-                
-        threading.Thread(target=run_validation, daemon=True).start()
-
-    p2p_node.on_trajectory_received = p2p_judge_worker
+    # P2P Node background event listeners can be added here if needed
     
     def run_p2p():
         asyncio.run(p2p_node.start())

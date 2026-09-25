@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ZYRA Protocol: The Decentralized Agentic AI Ecosystem</title>
+    <title>Myth Protocol: ZYRA Decentralized Agentic AI Ecosystem</title>
     <style>
         body {
             background-color: #ffffff;
@@ -148,7 +148,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>ZYRA Protocol: The Decentralized Agentic AI Ecosystem</h1>
+        <h1>Myth Protocol: ZYRA Decentralized Agentic AI Ecosystem</h1>
         
         <div class="author-box">
             <div class="author">Annabil Hisyam M</div>
@@ -172,7 +172,7 @@
         </p>
         <ul>
             <li><strong>The Planner Agent:</strong> Responsible for breaking down complex human prompts into sequential, algorithmic blueprints. It performs web research, orchestrates the workflow, and delegates tasks.</li>
-            <li><strong>The Coder Agent:</strong> Responsible for the syntactic execution of the Planner's blueprint. It autonomously writes code, executes it within a sandboxed environment, and iteratively debugs syntax or logic errors.</li>
+            <li><strong>The Coder Agent:</strong> Responsible for the syntactic execution of the Planner's blueprint. It autonomously writes code, executes it within a strictly constrained Ephemeral Docker Sandbox (isolated network access, limited to 512MB RAM and constrained CPU), and iteratively debugs syntax or logic errors safely.</li>
         </ul>
         <p>
             These agents operate sequentially within the node's VRAM constraints, allowing complex multi-step reasoning to be processed entirely locally without Out-Of-Memory (OOM) failures.
@@ -195,7 +195,7 @@
             <div class="flow-arrow">&#8595;</div>
             <div class="flow-box">Miner Node (AI Swarm)<span class="flow-sub">Downloads Task. Planner & Coder Execute Logic locally</span></div>
             <div class="flow-arrow">&#8595;</div>
-            <div class="flow-box">IPFS (Pinata Node)<span class="flow-sub">Execution Trajectory Compressed & Uploaded. Returns CID Hash</span></div>
+            <div class="flow-box">P2P File Transfer<span class="flow-sub">Workspace Compressed Locally. Seeded directly to Peers via CIDv0</span></div>
             <div class="flow-arrow">&#8595;</div>
             <div class="flow-box">P2P Gossip Network<span class="flow-sub">CID Broadcasted to Network for Validation</span></div>
             <div class="flow-arrow">&#8595;</div>
@@ -214,12 +214,12 @@
             Once a Miner generates an Execution Trajectory, it broadcasts this payload to the ZYRA P2P network. A subset of peer nodes is stochastically selected to act as Smart Judges. These judges employ their local LLMs to semantically analyze the trajectory, ensuring no malicious logic (e.g., wallet drainers or remote exploits) is present, and verifying that the code successfully satisfies the original prompt. If a supermajority of judges mathematically sign off on the trajectory, consensus is achieved.
         </p>
 
-        <h2>6. Payload Compression via IPFS (Pinata)</h2>
+        <h2>6. P2P Local Payload Compression and File Transfer</h2>
         <p>
             A severe limitation in bridging AI with smart contracts is payload dimensionality. An Execution Trajectory is highly verbose, often encompassing megabytes of text. Storing this directly on an EVM-compatible blockchain like Celo would incur astronomical Gas fees, rendering the network economically unviable.
         </p>
         <p>
-            ZYRA solves this via IPFS integration. The raw trajectory payload is compressed and uploaded to the InterPlanetary File System via the Pinata API. IPFS returns a deterministic, immutable Content Identifier (CID) hash. The ZYRA Smart Contract on the Celo network strictly records this 46-byte CID. This architectural paradigm achieves <span class="code-term">O(1)</span> on-chain storage complexity, ensuring network scalability regardless of the underlying task complexity.
+            ZYRA solves this by decoupling data compression from storage. First, the raw trajectory workspace is compressed locally by the Miner node. Second, instead of relying on centralized gateways like Pinata, the compressed payload is hosted and seeded directly over ZYRA's P2P network. This process generates a deterministic, immutable Content Identifier (CIDv0). The ZYRA Smart Contract on the Celo network strictly records this 46-byte CIDv0 string. This architectural paradigm achieves <span class="code-term">O(1)</span> on-chain storage complexity, ensuring network scalability regardless of the underlying task complexity.
         </p>
 
         <h2>7. ZYRA Tokenomics</h2>
