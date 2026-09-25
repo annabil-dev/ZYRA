@@ -705,6 +705,7 @@ try:
                 ('/config', 'Konfigurasi Wallet dan Tracker Server'),
                 ('/wallet', 'Lihat saldo ZYRA dan alamat Wallet'),
                 ('/submit', 'Lempar tugas coding ke jaringan (Mempool)'),
+                ('/update', 'Cek dan install update terbaru ZYRA Network'),
                 ('exit', 'Tutup aplikasi ZYRA')
             ]
 
@@ -902,6 +903,7 @@ def main():
                     print("  \033[93m/link\033[0m    - Link your MetaMask address (e.g., /link 0x...)")
                     print("  \033[93m/claim\033[0m   - Claim ZYRA tokens to your linked MetaMask")
                     print("  \033[93m/stake\033[0m   - Stake ZYRA tokens to become a Validator (requires CELO gas)")
+                    print("  \033[93m/update\033[0m  - Cek dan install update terbaru")
                     print("  \033[93mexit\033[0m     - Exit the CLI\n")
                     continue
                 elif cmd == '/logs':
@@ -920,6 +922,49 @@ def main():
                                 print(f"File disimpan di: {latest_file}")
                     else:
                         print("\033[91m[Error]\033[0m Belum ada file log audit yang ditemukan. Jalankan /automode terlebih dahulu.\n")
+                    continue
+                elif cmd == '/update':
+                    print("\033[96m[System]\033[0m Mengecek update terbaru di PyPI...")
+                    try:
+                        resp = requests.get("https://pypi.org/pypi/zyra-network/json", timeout=10)
+                        if resp.status_code == 200:
+                            latest_version = resp.json()["info"]["version"]
+                            if latest_version != cli_version and cli_version != "dev":
+                                print(f"\033[93m[Update Tersedia]\033[0m Versi terbaru: \033[1m{latest_version}\033[0m (Versi lu: {cli_version})")
+                                choice = input("Update sekarang dan otomatis restart? [Y/n]: ").strip().lower()
+                                if choice != 'n':
+                                    import subprocess
+                                    import tempfile
+                                    
+                                    # Create a detached updater script
+                                    updater_code = f"""import sys, time, subprocess, os
+print("Waiting for ZYRA to exit...")
+time.sleep(2)
+print("Installing update...")
+subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "zyra-network"], check=True)
+print("Update complete! Restarting ZYRA...")
+if os.name == 'nt':
+    os.system("start cmd /k zyra")
+else:
+    os.system("zyra")
+"""
+                                    updater_path = os.path.join(tempfile.gettempdir(), "zyra_updater.py")
+                                    with open(updater_path, "w") as f:
+                                        f.write(updater_code)
+                                        
+                                    print("\033[92m[System]\033[0m Memulai proses update. CLI akan tertutup sementara...")
+                                    
+                                    if os.name == 'nt':
+                                        subprocess.Popen([sys.executable, updater_path], creationflags=subprocess.CREATE_NEW_CONSOLE)
+                                    else:
+                                        subprocess.Popen([sys.executable, updater_path])
+                                    sys.exit(0)
+                            else:
+                                print(f"\033[92m[System]\033[0m ZYRA CLI lu udah versi paling baru (v{cli_version}).\n")
+                        else:
+                            print("\033[91m[Error]\033[0m Gagal mengecek update dari PyPI.\n")
+                    except Exception as e:
+                        print(f"\033[91m[Error]\033[0m {e}\n")
                     continue
                 elif cmd == '/judge':
                     run_validator_mode(wallet, llm.model_name)
