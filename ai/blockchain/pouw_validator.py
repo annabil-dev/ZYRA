@@ -128,84 +128,47 @@ class PoUWValidator:
             if not files_to_write:
                 return False, "Workspace is empty. Invalid."
                 
+            test_path = os.path.join(sandbox, "test_suite.py")
+            if not os.path.exists(test_path):
+                return False, "Trajectory rejected: Planner failed to generate test_suite.py (TDD violation)."
+                
             try:
-                # 3. Ask LLM to generate a test script based on the prompt
-                judge_model = model_name or os.environ.get("JUDGE_MODEL", "qwen2.5-coder:7b")
-                file_list = ", ".join(files_to_write.keys())
+                print(f"[\033[96mSmart Judge\033[0m] Running Deterministic TDD Validation in {sandbox} ...")
+                command = "python -m unittest test_suite.py"
+                docker_cmd = [
+                    "docker", "run", "--rm", 
+                    "--network", "none", 
+                    "--memory", "512m", 
+                    "--cpus", "0.5",
+                    "-v", f"{sandbox}:/app", 
+                    "-w", "/app", 
+                    "python:3.10-slim", 
+                    "sh", "-c", command
+                ]
                 
-                # Build file context string
-                file_context = ""
-                for filename, content in files_to_write.items():
-                    file_context += f"--- {filename} ---\n```python\n{content}\n```\n\n"
-
-                test_prompt = f"""You are a strict Smart Judge (QA Engineer) for a blockchain network.
-The user requested this task: "{initial_prompt}"
-The miner created the following files to solve it:
-{file_context}
-
-Write a comprehensive `unittest` script (using Python's built-in unittest module) that imports the miner's code and tests if the task was completed correctly based on the user's prompt.
-If the miner's code is just a script that prints something, use `capsys` or `subprocess` to capture and test its output.
-Do NOT test things that require an internet connection.
-Only output the Python code wrapped in ```python ... ```. Do not add explanations.
-"""
-                payload = {
-                    "model": judge_model,
-                    "prompt": test_prompt,
-                    "stream": False,
-                    "options": {"temperature": 0.0}
-                }
-                
-                print(f"[\033[96mSmart Judge\033[0m] Generating TDD Unittest script for validation...")
-                resp = requests.post("http://localhost:11434/api/generate", json=payload, timeout=60)
-                if resp.status_code == 200:
-                    test_code_raw = resp.json().get('response', '')
-                    match = re.search(r'```python\n(.*?)\n```', test_code_raw, re.DOTALL)
-                    test_code = match.group(1) if match else test_code_raw.replace('```python', '').replace('```', '')
-                        
-                    test_path = os.path.join(sandbox, "test_zyra_validation.py")
-                    with open(test_path, 'w', encoding='utf-8') as f:
-                        f.write(test_code)
-                        
-                    # 4. Execute the test using unittest inside Docker (Secure) or Fallback (Insecure)
-                    print(f"[\033[96mSmart Judge\033[0m] Running Execution-Based Validation in {sandbox} ...")
-                    try:
-                        command = "python -m unittest test_zyra_validation.py"
-                        docker_cmd = [
-                            "docker", "run", "--rm", 
-                            "--network", "none", 
-                            "--memory", "512m", 
-                            "--cpus", "0.5",
-                            "-v", f"{sandbox}:/app", 
-                            "-w", "/app", 
-                            "python:3.10-slim", 
-                            "sh", "-c", command
-                        ]
-                        
-                        try:
-                            subprocess.run(["docker", "--version"], capture_output=True, check=True)
-                            use_docker = True
-                        except (subprocess.CalledProcessError, FileNotFoundError):
-                            use_docker = False
-                            
-                        if use_docker:
-                            result = subprocess.run(docker_cmd, capture_output=True, text=True, timeout=60)
-                        else:
-                            print(f"\033[91m[WARNING]\033[0m Docker not found. Falling back to local INSECURE validation in {sandbox}")
-                            result = subprocess.run(["python", "-m", "unittest", "test_zyra_validation.py"], cwd=sandbox, capture_output=True, text=True, timeout=30)
-                        
-                        if result.returncode == 0:
-                            print(f"[\033[92mSmart Judge\033[0m] TDD Validation PASSED!")
-                            return True, "Execution-based validation passed."
-                        else:
-                            print(f"[\033[91mSmart Judge\033[0m] TDD Validation FAILED.\n\033[90mUnittest Output:\n{result.stdout.strip()[:1000]}\n{result.stderr.strip()[:1000]}\033[0m")
-                            return False, f"Unittest failed. Tests did not pass."
-                            
-                    except subprocess.TimeoutExpired:
-                        return False, "Validation script timed out."
-                    except FileNotFoundError:
-                        return False, "Python/Docker not installed on validator node."
+                try:
+                    subprocess.run(["docker", "--version"], capture_output=True, check=True)
+                    use_docker = True
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    use_docker = False
+                    
+                if use_docker:
+                    result = subprocess.run(docker_cmd, capture_output=True, text=True, timeout=60)
                 else:
-                    return False, "Failed to generate test script."
+                    print(f"\033[91m[WARNING]\033[0m Docker not found. Falling back to local INSECURE validation in {sandbox}")
+                    result = subprocess.run(["python", "-m", "unittest", "test_suite.py"], cwd=sandbox, capture_output=True, text=True, timeout=30)
+                
+                if result.returncode == 0:
+                    print(f"[\033[92mSmart Judge\033[0m] Deterministic TDD Validation PASSED!")
+                    return True, "Execution-based validation passed."
+                else:
+                    print(f"[\033[91mSmart Judge\033[0m] Deterministic TDD Validation FAILED.\n\033[90mUnittest Output:\n{result.stdout.strip()[:1000]}\n{result.stderr.strip()[:1000]}\033[0m")
+                    return False, f"Unittest failed. Tests did not pass."
+                    
+            except subprocess.TimeoutExpired:
+                return False, "Validation script timed out."
+            except FileNotFoundError:
+                return False, "Python/Docker not installed on validator node."
                     
             finally:
                 shutil.rmtree(sandbox, ignore_errors=True)

@@ -204,13 +204,17 @@ def run_automode(llm, initial_task: str, history: list, wallet: ZyraWallet, ledg
     planner_sys = f"""You are the PLANNER AGENT (Mandor).
 Task: {initial_task}
 RULES:
-1. Break down the task into technical steps. To save time, you MUST combine related simple actions (e.g., creating a directory and writing a file inside it) into a single <DELEGATE> instruction whenever possible. Do not over-complicate simple tasks.
-2. Delegate to the CODER AGENT using exactly this format:
+1. **TDD REQUIRED**: Before delegating the main code to the Coder, you MUST write a strict mathematical Unit Test using Python's built-in `unittest` module and save it as `test_suite.py`. This test suite must verify the correctness of the Coder's future work.
+2. To write the test suite, use exactly this format:
+<WRITE_FILE path="test_suite.py">
+import unittest
+...
+</WRITE_FILE>
+3. After writing the test suite, delegate to the CODER AGENT using exactly this format:
 <DELEGATE>instruction for coder</DELEGATE>
-3. Wait for the Coder to report completion before sending the next <DELEGATE>. DO NOT send multiple <DELEGATE> tags in a single message.
-4. You CANNOT execute code. You only plan and delegate.
-5. Trust the Coder if they report success. DO NOT ask the coder to execute the exact same task twice. Proceed to the next step or finish.
-6. DO NOT output <ALL_DONE> until you have verified all steps are truly finished.
+4. Wait for the Coder to report completion before sending the next <DELEGATE>. DO NOT send multiple <DELEGATE> tags in a single message.
+5. You CANNOT execute terminal commands. You only plan, write test suites, and delegate.
+6. DO NOT output <ALL_DONE> until you have verified all steps are truly finished and the tests pass.
 7. When the entire task is truly finished, output exactly:
 <ALL_DONE>
 8. If the system asks you to confirm completion, and you are 100% sure, reply exactly:
@@ -284,9 +288,35 @@ print("hello")
         if len(planner_history) > 10:
             planner_history = [planner_history[0]] + planner_history[-9:]
             
+        # --- SANDBOX SETUP ---
+        t_id = task_id if task_id else "local_task"
+        sandbox_dir = os.path.abspath(os.path.join("sandbox_workspace", t_id))
+        os.makedirs(sandbox_dir, exist_ok=True)
+        # ---------------------
+            
         planner_output = generate_response(planner_history, "Planner")
         planner_history.append({"role": "assistant", "content": planner_output})
         full_trajectory_log.append({"role": "planner", "content": planner_output})
+        
+        write_pattern = r"<WRITE_FILE(?:\s+path=\"([^\"]+)\")?>\n*(.*?)\n*(?:</WRITE_FILE>|$)"
+        write_matches = list(re.finditer(write_pattern, planner_output, re.DOTALL | re.IGNORECASE))
+        if write_matches:
+            for match in write_matches:
+                file_path = match.group(1)
+                content = match.group(2)
+                if file_path:
+                    print(f"\033[93m[Planner Agent]\033[0m Writing file: \033[96m{file_path}\033[0m")
+                    try:
+                        abs_path = os.path.abspath(os.path.join(sandbox_dir, file_path))
+                        if not abs_path.startswith(sandbox_dir):
+                            raise Exception("Path traversal denied")
+                        os.makedirs(os.path.dirname(abs_path) or '.', exist_ok=True)
+                        with open(abs_path, 'w', encoding='utf-8') as f:
+                            f.write(content)
+                        planner_history.append({"role": "user", "content": f"Successfully wrote to {file_path}"})
+                    except Exception as e:
+                        print(f"\033[91m[Failed]\033[0m {e}\n")
+                        planner_history.append({"role": "user", "content": f"Failed to write file {file_path}: {e}"})
         
         delegate_matches = re.findall(r"<DELEGATE>(.*?)(?:</DELEGATE>|$)", planner_output, re.DOTALL)
         
@@ -328,13 +358,7 @@ print("hello")
         print(f"\033[95m[Planner -> Coder]\033[0m \033[96m{preview_instr}\033[0m\n")
         coder_history.append({"role": "user", "content": f"PLANNER INSTRUCTION: {delegate_instruction}"})
         
-        # --- SANDBOX SETUP ---
-        import shutil
-        t_id = task_id if task_id else "local_task"
-        sandbox_dir = os.path.abspath(os.path.join("sandbox_workspace", t_id))
-        os.makedirs(sandbox_dir, exist_ok=True)
-        # ---------------------
-        
+
         coder_steps = 5
         step_completed = False
         coder_action_log = []
