@@ -2,8 +2,8 @@
   "_format": "hh-sol-cache-2",
   "files": {
     "D:\\Semester 5\\AI\\my_ai\\blockchain\\contracts\\ZyraToken.sol": {
-      "lastModificationDate": 1789959057509,
-      "contentHash": "106f62b9d3f4b86da31bbd2c62e5a901",
+      "lastModificationDate": 1790306592506,
+      "contentHash": "37428699c99c03af8d1a2880f32ec379",
       "sourceName": "contracts/ZyraToken.sol",
       "solcConfig": {
         "version": "0.8.20",

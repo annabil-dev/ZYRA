@@ -40,4 +40,52 @@ contract ZyraToken is ERC20, Ownable {
         dailyMinted += amount;
         _mint(to, amount);
     }
+    
+    // --- Validator Staking & Slashing ---
+    mapping(address => uint256) public stakedBalances;
+    
+    event Staked(address indexed user, uint256 amount);
+    event Unstaked(address indexed user, uint256 amount);
+    event Slashed(address indexed user, uint256 amount);
+
+    /**
+     * @dev Lock tokens to register as a Smart Judge.
+     */
+    function stake(uint256 amount) external {
+        require(amount > 0, "ZYRA: Cannot stake 0");
+        require(balanceOf(msg.sender) >= amount, "ZYRA: Insufficient balance to stake");
+        
+        // Transfer tokens from user to this contract
+        _transfer(msg.sender, address(this), amount);
+        stakedBalances[msg.sender] += amount;
+        
+        emit Staked(msg.sender, amount);
+    }
+
+    /**
+     * @dev Withdraw staked tokens.
+     */
+    function unstake(uint256 amount) external {
+        require(amount > 0, "ZYRA: Cannot unstake 0");
+        require(stakedBalances[msg.sender] >= amount, "ZYRA: Insufficient staked balance");
+        
+        stakedBalances[msg.sender] -= amount;
+        _transfer(address(this), msg.sender, amount);
+        
+        emit Unstaked(msg.sender, amount);
+    }
+
+    /**
+     * @dev Slash (burn) a validator's staked tokens for malicious behavior.
+     * Only the bridge server (Owner) can call this.
+     */
+    function slash(address validator, uint256 amount) external onlyOwner {
+        require(stakedBalances[validator] >= amount, "ZYRA: Insufficient staked balance to slash");
+        
+        stakedBalances[validator] -= amount;
+        // Burn the slashed tokens to reduce total supply permanently
+        _burn(address(this), amount);
+        
+        emit Slashed(validator, amount);
+    }
 }

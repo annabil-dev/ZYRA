@@ -57,6 +57,15 @@ class ZyraWeb3Bridge:
                 ],
                 "stateMutability": "view",
                 "type": "function"
+            },
+            {
+                "inputs": [
+                    {"internalType": "uint256", "name": "amount", "type": "uint256"}
+                ],
+                "name": "stake",
+                "outputs": [],
+                "stateMutability": "nonpayable",
+                "type": "function"
             }
         ]
             
@@ -106,6 +115,46 @@ class ZyraWeb3Bridge:
             tx_hash = self.w3.eth.send_raw_transaction(raw_tx)
             
             # Wait for receipt
+            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            if receipt.status == 1:
+                return self.w3.to_hex(tx_hash)
+            else:
+                raise Exception("Transaction failed on the blockchain.")
+        except ContractLogicError as e:
+            raise Exception(f"Smart Contract Logic Error: {e}")
+        except Exception as e:
+            raise Exception(f"Web3 Error: {e}")
+
+    def stake(self, user_private_key: str, amount_zyra: float) -> str:
+        if not self.w3.is_connected():
+            raise ConnectionError("Cannot connect to Celo Sepolia Testnet RPC.")
+            
+        if not self.contract:
+            raise ValueError("Contract address not set. Please deploy or set contract address first.")
+            
+        user_account = self.w3.eth.account.from_key(user_private_key)
+        
+        # Convert to Wei (18 decimals)
+        amount_wei = self.w3.to_wei(amount_zyra, 'ether')
+        
+        # Build transaction
+        nonce = self.w3.eth.get_transaction_count(user_account.address)
+        
+        tx = self.contract.functions.stake(amount_wei).build_transaction({
+            'chainId': 11142220, # Celo Sepolia chain ID
+            'gas': 200000,
+            'gasPrice': self.w3.eth.gas_price,
+            'nonce': nonce,
+        })
+        
+        # Sign transaction
+        signed_tx = self.w3.eth.account.sign_transaction(tx, private_key=user_private_key)
+        
+        # Send transaction
+        try:
+            raw_tx = getattr(signed_tx, 'raw_transaction', getattr(signed_tx, 'rawTransaction', None))
+            tx_hash = self.w3.eth.send_raw_transaction(raw_tx)
+            
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
             if receipt.status == 1:
                 return self.w3.to_hex(tx_hash)

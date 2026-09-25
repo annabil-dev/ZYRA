@@ -693,6 +693,7 @@ try:
                 ('/export', 'Simpan riwayat percakapan ke Markdown'),
                 ('/link', 'Hubungkan alamat MetaMask (/link <address>)'),
                 ('/claim', 'Tarik token ZYRA ke dompet Web3 (/claim <amount>)'),
+                ('/stake', 'Stake token ZYRA untuk menjadi Validator (/stake <amount>)'),
                 ('/automode', 'Aktifkan Swarm AI Multi-Model (/automode <task>)'),
                 ('/judge', 'Run as P2P Validator Node'),
                 ('/mine', 'Auto-Mining tugas dari ZYRA Network'),
@@ -900,6 +901,7 @@ def main():
                     print("  \033[93m/judge\033[0m   - Run as P2P Validator Node")
                     print("  \033[93m/link\033[0m    - Link your MetaMask address (e.g., /link 0x...)")
                     print("  \033[93m/claim\033[0m   - Claim ZYRA tokens to your linked MetaMask")
+                    print("  \033[93m/stake\033[0m   - Stake ZYRA tokens to become a Validator (requires CELO gas)")
                     print("  \033[93mexit\033[0m     - Exit the CLI\n")
                     continue
                 elif cmd == '/logs':
@@ -1090,6 +1092,38 @@ def main():
                         except Exception as e:
                             print(f"\033[91m[Web3 Error]\033[0m {e}\n")
                             print("Make sure you have run 'npx hardhat run scripts/deploy.js --network localhost'")
+                    except ValueError:
+                        print("\033[91m[Error]\033[0m Invalid amount.\n")
+                    continue
+                elif user_input.startswith('/stake '):
+                    parts = user_input.split(' ', 1)
+                    if len(parts) < 2:
+                        print("\033[91m[Error]\033[0m Usage: /stake <amount>\n")
+                        continue
+                    try:
+                        amount = float(parts[1].strip())
+                        if amount <= 0:
+                            print("\033[91m[Error]\033[0m Amount must be positive.\n")
+                            continue
+                            
+                        print(f"\033[94m[System]\033[0m Initiating Staking transaction for {amount} ZYRA...")
+                        try:
+                            from zyra_cmd.web3_bridge import ZyraWeb3Bridge
+                            bridge = ZyraWeb3Bridge()
+                            
+                            contract_addr = os.environ.get("ZYRA_CONTRACT_ADDRESS")
+                            if not contract_addr:
+                                print("\033[91m[Error]\033[0m ZYRA_CONTRACT_ADDRESS tidak ditemukan di .env!\n")
+                                continue
+                                
+                            bridge.set_contract_address(contract_addr)
+                            # Assuming CLI's wallet private_key is an EVM private key funded with CELO
+                            tx_hash = bridge.stake(wallet.private_key, amount)
+                            
+                            print(f"\033[92m[System]\033[0m Staking successful! You can now run /judge")
+                            print(f"\033[96m[TxHash]\033[0m {tx_hash}\n")
+                        except Exception as e:
+                            print(f"\033[91m[Web3 Error]\033[0m {e}\n(Pastikan wallet EVM anda {wallet.metamask_address or 'lokal'} memiliki saldo CELO untuk gas)\n")
                     except ValueError:
                         print("\033[91m[Error]\033[0m Invalid amount.\n")
                     continue

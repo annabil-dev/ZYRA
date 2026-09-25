@@ -66,6 +66,28 @@ CONTRACT_ABI = json.loads('''[
       ],
       "stateMutability": "view",
       "type": "function"
+    },
+    {
+      "inputs": [
+        { "internalType": "address", "name": "", "type": "address" }
+      ],
+      "name": "stakedBalances",
+      "outputs": [
+        { "internalType": "uint256", "name": "", "type": "uint256" }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        { "internalType": "address", "name": "validator", "type": "address" },
+        { "internalType": "uint256", "name": "amount", "type": "uint256" }
+      ],
+      "name": "slash",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
     }
 ]''')
 
@@ -292,6 +314,18 @@ def upload_ipfs_endpoint():
 @app.route('/validator/get_task', methods=['GET'])
 def get_validation_task():
     """Validator requests a pending PoUW task to judge"""
+    wallet = request.args.get('wallet')
+    
+    # 1. Check if the validator has staked enough ZYRA
+    if wallet:
+        try:
+            staked_wei = zyra_contract.functions.stakedBalances(web3.to_checksum_address(wallet)).call()
+            staked_zyra = float(web3.from_wei(staked_wei, 'ether'))
+            if staked_zyra < 1000.0:
+                return jsonify({"error": f"Insufficient stake to validate. Required: 1000 ZYRA, You have: {staked_zyra} ZYRA."}), 403
+        except Exception as e:
+            return jsonify({"error": f"Failed to check staking balance: {e}"}), 500
+
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
