@@ -51,12 +51,12 @@ Rencana Solusi (SEBAGIAN SELESAI, PERLU REVISI):
   menjadi "Capped Supply" (Maksimum 21 Juta Token).
 
 --------------------------------------------------------------------
-4. SENTRALISASI MEMPOOL TUGAS (PRIORITAS: MENENGAH)
+4. SENTRALISASI MEMPOOL TUGAS (PRIORITAS: MENENGAH) - STATUS: SELESAI
 --------------------------------------------------------------------
 Masalah: Diagram menunjukkan Mempool sebagai antrean tugas. Saat ini 
 Mempool masih tersimpan di database SQLite lokal di Tracker Server.
 
-Rencana Solusi:
+Rencana Solusi (SELESAI):
 - Memindahkan Mempool dari `server.py` menjadi struktur data terdistribusi 
   di dalam jaringan Gossip P2P (Distributed Hash Table / DHT).
 - Node baru yang terhubung akan melakukan sinkronisasi Mempool secara 

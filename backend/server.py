@@ -88,7 +88,6 @@ CONTRACT_ABI = json.loads('''[
       "stateMutability": "nonpayable",
       "type": "function"
     }
-    }
 ]''')
 
 zyra_contract = web3.eth.contract(address=web3.to_checksum_address(CONTRACT_ADDRESS), abi=CONTRACT_ABI)
