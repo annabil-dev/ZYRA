@@ -940,31 +940,33 @@ def main():
                                 choice = input("Update sekarang dan otomatis restart? [Y/n]: ").strip().lower()
                                 if choice != 'n':
                                     import subprocess
-                                    import tempfile
+                                    import os
+                                    import sys
                                     
-                                    # Create a detached updater script
-                                    updater_code = f"""import sys, time, subprocess, os
+                                    if os.name == 'nt':
+                                        import tempfile
+                                        # Windows: Locked files, need background script
+                                        updater_code = f"""import sys, time, subprocess, os
 print("Waiting for ZYRA to exit...")
 time.sleep(2)
 print("Installing update...")
 subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "zyra-network"], check=True)
 print("Update complete! Restarting ZYRA...")
-if os.name == 'nt':
-    os.system("start cmd /k zyra")
-else:
-    os.system("zyra")
+os.system("start cmd /k zyra")
 """
-                                    updater_path = os.path.join(tempfile.gettempdir(), "zyra_updater.py")
-                                    with open(updater_path, "w") as f:
-                                        f.write(updater_code)
-                                        
-                                    print("\033[92m[System]\033[0m Memulai proses update. CLI akan tertutup sementara...")
-                                    
-                                    if os.name == 'nt':
+                                        updater_path = os.path.join(tempfile.gettempdir(), "zyra_updater.py")
+                                        with open(updater_path, "w") as f:
+                                            f.write(updater_code)
+                                            
+                                        print("\033[92m[System]\033[0m Memulai proses update. CLI akan tertutup sementara...")
                                         subprocess.Popen([sys.executable, updater_path], creationflags=subprocess.CREATE_NEW_CONSOLE)
+                                        sys.exit(0)
                                     else:
-                                        subprocess.Popen([sys.executable, updater_path])
-                                    sys.exit(0)
+                                        # Linux/macOS: Files not locked, upgrade inline and execv
+                                        print("\033[92m[System]\033[0m Mendownload dan menginstall update...")
+                                        subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "zyra-network"], check=True)
+                                        print("\033[92m[System]\033[0m Update complete! Restarting ZYRA...")
+                                        os.execv(sys.executable, [sys.executable] + sys.argv)
                             else:
                                 print(f"\033[92m[System]\033[0m ZYRA CLI lu udah versi paling baru (v{cli_version}).\n")
                         else:
