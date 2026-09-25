@@ -701,6 +701,13 @@ try:
                         task_id = task.get("task_id")
                         if task_id and task_id in p2p_node.tasks:
                             p2p_node.tasks[task_id]["status"] = "pending"
+                            
+                            # Auto-Correction Feedback Loop: Append judge's reason to the task prompt!
+                            old_prompt = p2p_node.tasks[task_id].get("prompt", "")
+                            feedback_text = f"\n\n[SYSTEM NOTE: A previous attempt at this task failed validation. Judge Feedback: '{reason}'. Please ensure this issue is fixed.]"
+                            if "[SYSTEM NOTE" not in old_prompt:
+                                p2p_node.tasks[task_id]["prompt"] = old_prompt + feedback_text
+                                
                             update_msg = create_message(MessageType.TASK_UPDATED, p2p_node.tasks[task_id])
                             asyncio.run_coroutine_threadsafe(p2p_node.broadcast(update_msg), p2p_node.loop)
                     
