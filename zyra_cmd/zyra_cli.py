@@ -690,6 +690,19 @@ try:
                         print(f"[\033[92mSUCCESS\033[0m] Validation PASSED and signature broadcasted to P2P network!\n")
                     else:
                         print(f"[\033[91mREJECTED\033[0m] Task failed validation. Reason: {reason}. Mempool cleared.\n")
+                        
+                        # Mark trajectory as rejected so it is not validated again
+                        if traj_hash in p2p_node.trajectories:
+                            p2p_node.trajectories[traj_hash]["status"] = "rejected"
+                            traj_update_msg = create_message(MessageType.TRAJECTORY_UPDATED, p2p_node.trajectories[traj_hash])
+                            asyncio.run_coroutine_threadsafe(p2p_node.broadcast(traj_update_msg), p2p_node.loop)
+                        
+                        # Reset the original task back to pending so another miner can work on it
+                        task_id = task.get("task_id")
+                        if task_id and task_id in p2p_node.tasks:
+                            p2p_node.tasks[task_id]["status"] = "pending"
+                            update_msg = create_message(MessageType.TASK_UPDATED, p2p_node.tasks[task_id])
+                            asyncio.run_coroutine_threadsafe(p2p_node.broadcast(update_msg), p2p_node.loop)
                     
                     time.sleep(2)
                 else:

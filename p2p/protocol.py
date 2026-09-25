@@ -13,7 +13,7 @@ class MessageType:
     FILE_REQUEST = "FILE_REQUEST"
     FILE_CHUNK = "FILE_CHUNK"
     TASK_UPDATED = "TASK_UPDATED"
-
+    TRAJECTORY_UPDATED = "TRAJECTORY_UPDATED"
 def create_message(msg_type, payload=None):
     return json.dumps({
         "type": msg_type,

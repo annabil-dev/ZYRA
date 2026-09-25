@@ -244,6 +244,21 @@ class P2PNode:
                     self.on_trajectory_received(payload)
                 await self.broadcast(raw_msg_str, exclude=websocket)
                 
+        elif msg_type == MessageType.TRAJECTORY_UPDATED:
+            traj_hash = payload.get("trajectory_hash")
+            if traj_hash in self.trajectories:
+                needs_update = False
+                for k, v in payload.items():
+                    if self.trajectories[traj_hash].get(k) != v:
+                        self.trajectories[traj_hash][k] = v
+                        needs_update = True
+                if needs_update:
+                    logging.info(f"Received TRAJECTORY_UPDATED: {traj_hash} -> {payload.get('status')}")
+                    await self.broadcast(raw_msg_str, exclude=websocket)
+            else:
+                self.trajectories[traj_hash] = payload
+                await self.broadcast(raw_msg_str, exclude=websocket)
+                
         elif msg_type == MessageType.VALIDATION_SIGNATURE:
             traj_hash = payload.get("trajectory_hash")
             sig = payload.get("signature")
