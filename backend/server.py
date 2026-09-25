@@ -121,8 +121,6 @@ def init_db():
         c.execute("ALTER TABLE tasks ADD COLUMN result_cid TEXT")
     except sqlite3.OperationalError:
         pass
-        
-    ''')
     c.execute('''
         CREATE TABLE IF NOT EXISTS pending_validations (
             id TEXT PRIMARY KEY,

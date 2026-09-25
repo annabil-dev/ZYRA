@@ -94,7 +94,7 @@ class P2PNode:
                     
             except Exception as e:
                 logging.warning(f"Failed to connect to Bridge Relay ({relay_uri}): {e}")
-                print(f"[\033[91mDEBUG P2P\033[0m] Miner failed to connect to Relay Server at {relay_uri}! Error: {e}. Check Firewall Port 5050!")
+#                 print(f"[\033[91mDEBUG P2P\033[0m] Miner failed to connect to Relay Server at {relay_uri}! Error: {e}. Check Firewall Port 5050!")
             
             # Reconnect after 10 seconds
             await asyncio.sleep(10)
@@ -189,7 +189,7 @@ class P2PNode:
         payload = msg.get("payload")
         
         if msg_type != MessageType.FILE_CHUNK:
-            print(f"[\033[93mDEBUG P2P\033[0m] Handled msg_type: {msg_type}")
+#             print(f"[\033[93mDEBUG P2P\033[0m] Handled msg_type: {msg_type}")
             
         if msg_type == MessageType.NEW_TASK:
             task_id = payload.get("task_id")
@@ -246,7 +246,7 @@ class P2PNode:
             
         elif msg_type == MessageType.FILE_REQUEST:
             cid = payload.get("cid")
-            print(f"[\033[93mDEBUG P2P\033[0m] FILE_REQUEST received for {cid}. My hosted files: {list(self.hosted_files.keys())}")
+#             print(f"[\033[93mDEBUG P2P\033[0m] FILE_REQUEST received for {cid}. My hosted files: {list(self.hosted_files.keys())}")
             if cid in self.hosted_files:
                 print(f"[\033[96mP2P Node\033[0m] Found requested file {cid}. Starting upload...")
                 asyncio.create_task(self.send_file_chunks(cid, websocket))
@@ -282,7 +282,7 @@ class P2PNode:
 
     async def broadcast(self, raw_msg_str, exclude=None):
         """Gossip Protocol: Send message to all connected peers"""
-        print(f"[\033[93mDEBUG P2P\033[0m] Executing broadcast! Peers count: {len(self.peers)}")
+#         print(f"[\033[93mDEBUG P2P\033[0m] Executing broadcast! Peers count: {len(self.peers)}")
         if not self.peers:
             return
             
@@ -295,9 +295,9 @@ class P2PNode:
                 continue
             try:
                 await peer.send(raw_msg_str)
-                print(f"[\033[93mDEBUG P2P\033[0m] Successfully sent message to peer.")
+#                 print(f"[\033[93mDEBUG P2P\033[0m] Successfully sent message to peer.")
             except Exception as e:
-                print(f"[\033[91mDEBUG P2P\033[0m] Failed to send message to peer: {e}")
+#                 print(f"[\033[91mDEBUG P2P\033[0m] Failed to send message to peer: {e}")
                 disconnected.add(peer)
                 
         for peer in disconnected:
@@ -316,16 +316,16 @@ class P2PNode:
 
     async def request_file(self, cid, dest_path):
         """Request a file from the P2P network and wait for completion."""
-        print(f"[\033[93mDEBUG P2P\033[0m] request_file called for {cid}")
+#         print(f"[\033[93mDEBUG P2P\033[0m] request_file called for {cid}")
         self.downloading_files[cid] = {"chunks": {}, "path": dest_path}
         future = self.loop.create_future()
         self.file_transfer_callbacks[cid] = future
         
         logging.info(f"Broadcasting FILE_REQUEST for {cid}")
         msg = create_message(MessageType.FILE_REQUEST, {"cid": cid})
-        print(f"[\033[93mDEBUG P2P\033[0m] Broadcasting FILE_REQUEST msg...")
+#         print(f"[\033[93mDEBUG P2P\033[0m] Broadcasting FILE_REQUEST msg...")
         await self.broadcast(msg)
-        print(f"[\033[93mDEBUG P2P\033[0m] Broadcast complete! Waiting for future...")
+#         print(f"[\033[93mDEBUG P2P\033[0m] Broadcast complete! Waiting for future...")
         
         # Wait until file is assembled
         await future
@@ -371,16 +371,16 @@ class P2PNode:
         try:
             loop = asyncio.get_running_loop()
             asyncio.create_task(coro)
-            print("[\033[93mDEBUG P2P\033[0m] Scheduled coroutine on current loop.")
+#             print("[\033[93mDEBUG P2P\033[0m] Scheduled coroutine on current loop.")
         except RuntimeError:
             # We are not in an event loop, or in a different thread
             # Use the saved loop
             if hasattr(self, 'loop') and self.loop:
                 asyncio.run_coroutine_threadsafe(coro, self.loop)
-                print("[\033[93mDEBUG P2P\033[0m] Scheduled coroutine via threadsafe.")
+#                 print("[\033[93mDEBUG P2P\033[0m] Scheduled coroutine via threadsafe.")
             else:
                 logging.warning("Cannot broadcast message, no event loop running.")
-                print("[\033[91mDEBUG P2P\033[0m] Cannot broadcast message, no event loop running.")
+#                 print("[\033[91mDEBUG P2P\033[0m] Cannot broadcast message, no event loop running.")
 
     def add_task(self, task_payload):
         task_id = task_payload["task_id"]
