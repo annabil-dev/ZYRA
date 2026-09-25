@@ -80,6 +80,15 @@ class P2PNode:
                 logging.info(f"Connected to Bridge WebSocket Relay at {relay_uri}")
                 print(f"[\033[92mP2P\033[0m] Connected to Bridge Relay ({relay_uri})")
                 
+                # Sync mempool: ask for theirs, push ours
+                await self.relay_ws.send(create_message(MessageType.SYNC_MEMPOOL))
+                sync_data = {
+                    "tasks": self.tasks,
+                    "trajectories": self.trajectories,
+                    "signatures": self.signatures
+                }
+                await self.relay_ws.send(create_message(MessageType.MEMPOOL_DATA, sync_data))
+                
                 # Listen to relay messages
                 try:
                     async for message_str in self.relay_ws:
@@ -141,8 +150,14 @@ class P2PNode:
             self.peers.add(websocket)
             logging.info(f"Connected to peer: {uri}")
             
-            # Request mempool sync
+            # Sync mempool: ask for theirs, push ours
             await websocket.send(create_message(MessageType.SYNC_MEMPOOL))
+            sync_data = {
+                "tasks": self.tasks,
+                "trajectories": self.trajectories,
+                "signatures": self.signatures
+            }
+            await websocket.send(create_message(MessageType.MEMPOOL_DATA, sync_data))
             
             # Listen to this peer
             await self.listen_to_peer(websocket)
