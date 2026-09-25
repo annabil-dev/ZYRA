@@ -189,7 +189,7 @@ class P2PNode:
         payload = msg.get("payload")
         
         if msg_type != MessageType.FILE_CHUNK:
-#             print(f"[\033[93mDEBUG P2P\033[0m] Handled msg_type: {msg_type}")
+            pass # print(f"[\033[93mDEBUG P2P\033[0m] Handled msg_type: {msg_type}")
             
         if msg_type == MessageType.NEW_TASK:
             task_id = payload.get("task_id")
