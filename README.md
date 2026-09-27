@@ -66,3 +66,20 @@ Recovery requires a peer that still knows the task and an online node serving it
 workspace. Closing the client stops local monitoring/downloads until it is reopened.
 Tracking applies to tasks submitted with this version; older sessions that never
 saved task history cannot be reconstructed from local history automatically.
+
+## PoUW Judge Votes (prototype, local changes after v2.1.51)
+
+The `/judge` command signs PASS or FAIL votes using ECDSA/secp256k1. Votes bind
+the task ID, trajectory hash, workspace CID, acceptance hash, verdict and reason.
+Peers check the signature and judge address and count **two different judge
+addresses** before marking a task completed or sending failure feedback to a
+miner. The miner waits for the quorum before moving to the next task; its local
+ledger only records a reward once per task after approval. A failed quorum
+returns structured reasons so the same miner can retry that task.
+
+Run two independent judge nodes for end-to-end testing. Judges need a wallet
+created with `ecdsa` installed; older simulated wallets without a real 128-hex
+public key cannot submit a signed vote. This is a prototype vote quorum:
+judge selection and Sybil resistance are not implemented, and local SQLite
+balances are not final on-chain settlement. ZIP CIDs are still UUIDs and do not
+prove the transferred file matches a cryptographic content hash.

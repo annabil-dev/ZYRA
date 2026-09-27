@@ -51,6 +51,12 @@ class ZyraLedger:
                 balance REAL DEFAULT 0.0
             )
         ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS reward_claims (
+                task_id TEXT PRIMARY KEY,
+                txid TEXT NOT NULL UNIQUE
+            )
+        ''')
         
         conn.commit()
         
@@ -77,12 +83,19 @@ class ZyraLedger:
         conn.close()
         return row[0] if row else 0.0
 
-    def add_pouw_reward(self, receiver_address: str, amount: float, task_proof: dict) -> str:
+    def add_pouw_reward(self, receiver_address: str, amount: float, task_proof: dict, task_id=None) -> str:
         """
         Mints new ZYRA tokens to the receiver for completing a valid AI task.
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=15)
         c = conn.cursor()
+        c.execute("BEGIN IMMEDIATE")
+        if task_id:
+            c.execute("SELECT txid FROM reward_claims WHERE task_id = ?", (task_id,))
+            existing = c.fetchone()
+            if existing:
+                conn.close()
+                return existing[0]
         
         timestamp = time.time()
         
@@ -107,6 +120,8 @@ class ZyraLedger:
             INSERT INTO transactions (txid, block_height, sender, receiver, amount, type, signature, timestamp)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (txid, new_height, "SYSTEM", receiver_address, amount, "MINT", "POUW_VALIDATED", timestamp))
+        if task_id:
+            c.execute("INSERT INTO reward_claims (task_id, txid) VALUES (?, ?)", (task_id, txid))
         
         # Update Balance
         c.execute("INSERT OR IGNORE INTO balances (address, balance) VALUES (?, 0.0)", (receiver_address,))

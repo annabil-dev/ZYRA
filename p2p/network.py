@@ -9,6 +9,7 @@ import uuid
 import socket
 
 from p2p.protocol import MessageType, create_message, parse_message
+from p2p.votes import QUORUM, tally, verify_vote
 
 logging.basicConfig(filename='zyra_p2p.log', level=logging.INFO, format='%(asctime)s - [P2P] %(message)s')
 
@@ -29,7 +30,8 @@ class P2PNode:
         # Local Mempool
         self.tasks = {} # task_id -> task_data
         self.trajectories = {} # trajectory_hash -> trajectory_data
-        self.signatures = {} # trajectory_hash -> [signatures]
+        self.signatures = {} # trajectory_hash -> {judge_wallet: signed vote}
+        self._finalized_trajectories = set()
         
         # Keep track of seen message IDs to prevent infinite gossip loops
         self.seen_messages = set()
@@ -211,6 +213,8 @@ class P2PNode:
         if msg_type == MessageType.NEW_TASK:
             task_id = payload.get("task_id")
             if task_id not in self.tasks:
+                if payload.get("status") == "completed":
+                    return
                 logging.info(f"Received NEW_TASK: {task_id}")
                 self.tasks[task_id] = payload
                 self._notify_task_updated(self.tasks[task_id])
@@ -218,6 +222,18 @@ class P2PNode:
                 
         elif msg_type == MessageType.TASK_UPDATED:
             task_id = payload.get("task_id")
+            payload = dict(payload)
+            existing = self.tasks.get(task_id, {})
+            # A peer cannot announce completion without validated votes.
+            if payload.get("status") == "completed" and existing.get("status") != "completed":
+                payload.pop("status", None)
+                payload.pop("result_cid", None)
+            if existing.get("status") == "completed":
+                payload.pop("status", None)
+                payload.pop("result_cid", None)
+            if existing.get("acceptance_hash") and payload.get("acceptance_hash") != existing["acceptance_hash"]:
+                payload.pop("acceptance_hash", None)
+                payload.pop("acceptance", None)
             if task_id in self.tasks:
                 current_status = self.tasks[task_id].get("status")
                 new_status = payload.get("status")
@@ -233,7 +249,7 @@ class P2PNode:
                 if needs_update:
                     logging.info(f"Received TASK_UPDATED: {task_id} -> {new_status}")
                     self._notify_task_updated(self.tasks[task_id])
-                    await self.broadcast(raw_msg_str, exclude=websocket)
+                    await self.broadcast(create_message(MessageType.TASK_UPDATED, self.tasks[task_id]), exclude=websocket)
             else:
                 self.tasks[task_id] = payload
                 self._notify_task_updated(self.tasks[task_id])
@@ -265,13 +281,8 @@ class P2PNode:
                 await self.broadcast(raw_msg_str, exclude=websocket)
                 
         elif msg_type == MessageType.VALIDATION_SIGNATURE:
-            traj_hash = payload.get("trajectory_hash")
-            sig = payload.get("signature")
-            if traj_hash not in self.signatures:
-                self.signatures[traj_hash] = []
-            if sig not in self.signatures[traj_hash]:
-                logging.info(f"Received VALIDATION_SIGNATURE for {traj_hash}")
-                self.signatures[traj_hash].append(sig)
+            if self.accept_vote(payload):
+                logging.info(f"Verified vote for {payload['trajectory_hash']}")
                 await self.broadcast(raw_msg_str, exclude=websocket)
                 
         elif msg_type == MessageType.SYNC_MEMPOOL:
@@ -286,16 +297,25 @@ class P2PNode:
         elif msg_type == MessageType.MEMPOOL_DATA:
             logging.info("Received MEMPOOL_DATA sync")
             for task_id, task_data in payload.get("tasks", {}).items():
-                self.tasks.setdefault(task_id, {}).update(task_data)
+                if not isinstance(task_data, dict):
+                    continue
+                if task_id in self.tasks and self.tasks[task_id].get("status") == "completed":
+                    continue
+                data = dict(task_data)
+                if data.get("status") == "completed":
+                    data["status"] = "validating"
+                    data.pop("result_cid", None)
+                existing = self.tasks.get(task_id, {})
+                if existing.get("acceptance_hash") and data.get("acceptance_hash") != existing["acceptance_hash"]:
+                    data.pop("acceptance_hash", None)
+                    data.pop("acceptance", None)
+                self.tasks.setdefault(task_id, {}).update(data)
                 self._notify_task_updated(self.tasks[task_id])
             self.trajectories.update(payload.get("trajectories", {}))
-            # Merge signatures
-            for t_hash, sigs in payload.get("signatures", {}).items():
-                if t_hash not in self.signatures:
-                    self.signatures[t_hash] = []
-                for s in sigs:
-                    if s not in self.signatures[t_hash]:
-                        self.signatures[t_hash].append(s)
+            for votes in payload.get("signatures", {}).values():
+                if isinstance(votes, dict):
+                    for vote in votes.values():
+                        self.accept_vote(vote)
                         
         elif msg_type == MessageType.FILE_OFFER:
             cid = payload.get("cid")
@@ -431,6 +451,38 @@ class P2PNode:
             logging.error(f"Error sending file {cid}: {e}")
 
     # --- Public API for Local Node ---
+    def accept_vote(self, vote):
+        if not isinstance(vote, dict):
+            return False
+        trajectory = self.trajectories.get(vote.get("trajectory_hash"))
+        task = self.tasks.get(vote.get("task_id"))
+        if not verify_vote(vote, trajectory, task):
+            return False
+        votes = self.signatures.setdefault(vote["trajectory_hash"], {})
+        judge = vote["judge_wallet"]
+        if judge in votes:  # A judge gets only one vote, even after changing their mind.
+            return False
+        votes[judge] = vote
+        decision = tally(votes)
+        if decision and vote["trajectory_hash"] not in self._finalized_trajectories:
+            self._finalized_trajectories.add(vote["trajectory_hash"])
+            if decision == "PASS":
+                task["status"] = "completed"
+                task["result_cid"] = trajectory["trajectory_log"]
+                trajectory["status"] = "validated"
+            else:
+                task["status"] = "pending"
+                trajectory["status"] = "rejected"
+                task["feedback"] = [{"judge": v["judge_wallet"], "reason": v["reason"]}
+                                    for v in votes.values() if v["verdict"] == "FAIL"]
+                task["prompt"] = task.get("original_prompt", task.get("prompt", ""))
+                task.setdefault("original_prompt", task["prompt"])
+                task["prompt"] += "\n\n[JUDGE FEEDBACK]\n" + "\n".join(
+                    entry["reason"] for entry in task["feedback"])
+            self._notify_task_updated(task)
+            self._run_coroutine(self.broadcast(create_message(MessageType.TASK_UPDATED, task)))
+        return True
+
     def _notify_task_updated(self, task):
         if self.on_task_updated:
             try:
@@ -451,6 +503,7 @@ class P2PNode:
 #                 print("[\033[93mDEBUG P2P\033[0m] Scheduled coroutine via threadsafe.")
             else:
                 logging.warning("Cannot broadcast message, no event loop running.")
+                coro.close()
 #                 print("[\033[91mDEBUG P2P\033[0m] Cannot broadcast message, no event loop running.")
 
     def add_task(self, task_payload):
@@ -466,12 +519,11 @@ class P2PNode:
         self._run_coroutine(self.broadcast(msg))
         
     def add_signature(self, sig_payload):
-        t_hash = sig_payload["trajectory_hash"]
-        if t_hash not in self.signatures:
-            self.signatures[t_hash] = []
-        self.signatures[t_hash].append(sig_payload["signature"])
-        msg = create_message(MessageType.VALIDATION_SIGNATURE, sig_payload)
-        self._run_coroutine(self.broadcast(msg))
+        if self.accept_vote(sig_payload):
+            msg = create_message(MessageType.VALIDATION_SIGNATURE, sig_payload)
+            self._run_coroutine(self.broadcast(msg))
+            return True
+        return False
 
     async def sync_loop(self):
         # Periodically clean up old messages, check tracker for new peers, etc.

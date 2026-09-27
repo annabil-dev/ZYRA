@@ -89,4 +89,4 @@ class ZyraWallet:
                 return vk.verify(bytes.fromhex(signature), tx_data.encode())
             except Exception:
                 return False
-        return True # Fallback mode accepts all
+        return False  # Never accept unverified signatures.

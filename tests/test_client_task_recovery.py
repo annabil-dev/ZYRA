@@ -8,6 +8,8 @@ import websockets
 
 from p2p.network import P2PNode
 from p2p.protocol import MessageType, create_message, parse_message
+from p2p.votes import sign_vote
+from ai.blockchain.wallet import ZyraWallet
 from zyra_cmd.client_state import ClientState
 from zyra_cmd.client_tasks import ClientTaskMonitor, extract_workspace
 
@@ -66,7 +68,14 @@ def test_offline_completion_recovered_via_real_peer_sync_and_download(tmp_path):
 
         miner = P2PNode()
         miner.loop = asyncio.get_running_loop()
-        miner.tasks["task-one"] = {"task_id": "task-one", "status": "completed", "result_cid": "CID_ONE"}
+        miner_wallet = ZyraWallet(str(tmp_path / "miner-wallet"))
+        miner.tasks["task-one"] = {"task_id": "task-one", "status": "validating", "acceptance_hash": "acceptance"}
+        miner.trajectories["hash"] = {"task_id": "task-one", "trajectory_hash": "hash", "trajectory_log": "CID_ONE",
+                                      "acceptance_hash": "acceptance", "miner_identity": miner_wallet.address,
+                                      "miner_public_key": miner_wallet.public_key, "status": "pending_validation"}
+        for judge_name in ("judge1", "judge2"):
+            vote = sign_vote(ZyraWallet(str(tmp_path / judge_name)), miner.trajectories["hash"], "PASS")
+            miner.add_signature(vote)
         source = tmp_path / "miner.zip"
         with zipfile.ZipFile(source, "w") as archive:
             archive.writestr("src/hello.py", "print('hello')\n")
@@ -138,11 +147,14 @@ def test_incremental_task_updates_are_persisted(tmp_path):
         state.add_task({"task_id": "tracked", "status": "pending"})
         client = P2PNode()
         client.on_task_updated = state.update_from_network
-        for status in ("mining", "validating", "completed"):
+        for status in ("mining", "validating"):
             raw = create_message(MessageType.TASK_UPDATED,
                                  {"task_id": "tracked", "status": status, "result_cid": "CID"})
             await client.handle_message(parse_message(raw), None, raw)
             assert ClientState(tmp_path).get_task("tracked")["status"] == status
+        raw = create_message(MessageType.TASK_UPDATED, {"task_id": "tracked", "status": "completed", "result_cid": "fake"})
+        await client.handle_message(parse_message(raw), None, raw)
+        assert ClientState(tmp_path).get_task("tracked")["status"] == "validating"
     asyncio.run(scenario())
 
 

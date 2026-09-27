@@ -577,7 +577,9 @@ print("hello")
             "trajectory_log": cid,
             "acceptance_hash": contract_hash(acceptance),
             "reward": reward,
-            "status": "pending_validation"
+            "status": "pending_validation",
+            "miner_identity": wallet.address,
+            "miner_public_key": wallet.public_key
         }
         p2p_node.trajectories[traj_hash] = traj_payload
         traj_msg = create_message(MessageType.NEW_TRAJECTORY, traj_payload)
@@ -602,26 +604,35 @@ print("hello")
         try:
             start_wait = time.time()
             while time.time() - start_wait < 180:
-                if p2p_node.trajectories.get(traj_hash, {}).get("status") == "rejected":
+                from p2p.votes import tally
+                verdict = tally(p2p_node.signatures.get(traj_hash, {}))
+                if verdict == "FAIL":
                     network_status = "rejected"
-                    print("[System] Network rejected this delivery. No reward credited.")
+                    print(f"[Judge -> Miner] Rejected: {p2p_node.tasks.get(task_id, {}).get('feedback', [])}. No reward credited.")
                     break
-                sigs = p2p_node.signatures.get(traj_hash, [])
-                if len(sigs) >= 1:  # At least 1 judge validated
-                    ledger.add_pouw_reward(target_wallet, reward, proof)
+                sigs = p2p_node.signatures.get(traj_hash, {})
+                if p2p_node.tasks.get(task_id, {}).get("status") == "completed" and verdict == "PASS":
+                    ledger.add_pouw_reward(target_wallet, reward, proof, task_id=task_id)
                     network_status = "validated (local reward credited)"
-                    print("\033[92m[System]\033[0m Validation completed by the network!\n")
-                    # Mark task as completed
-                    if task_id and task_id in p2p_node.tasks:
-                        p2p_node.tasks[task_id]["status"] = "completed"
-                        update_msg = create_message(MessageType.TASK_UPDATED, p2p_node.tasks[task_id])
-                        asyncio.run_coroutine_threadsafe(p2p_node.broadcast(update_msg), p2p_node.loop)
+                    print("\033[92m[System]\033[0m Quorum of 2 distinct judges approved this task!\n")
                     break
+                if len(sigs) == 1:
+                    print("[Miner] One verified judge vote received. Waiting for second judge...")
                 time.sleep(3)
             else:
-                print("\033[93m[System]\033[0m Validation pending after 3 min. No reward credited yet.\n")
-        except Exception:
-            pass
+                print("\033[93m[System]\033[0m Validation still pending. Waiting for quorum; Ctrl+C stops mining.\n")
+                if task_id:
+                    while tally(p2p_node.signatures.get(traj_hash, {})) is None:
+                        time.sleep(3)
+                    if tally(p2p_node.signatures[traj_hash]) == "PASS" and p2p_node.tasks[task_id]["status"] == "completed":
+                        ledger.add_pouw_reward(target_wallet, reward, proof, task_id=task_id)
+                        network_status = "validated (local reward credited)"
+                    elif tally(p2p_node.signatures[traj_hash]) == "FAIL":
+                        network_status = "rejected"
+                        print(f"[Judge -> Miner] Rejected: {p2p_node.tasks.get(task_id, {}).get('feedback', [])}")
+        except KeyboardInterrupt:
+            print("[Miner] Validation is still pending. No reward credited. Stopping this mining session.")
+            raise
             
     except Exception as e:
         network_status = "submission_error"
@@ -673,10 +684,13 @@ try:
 
         from ai.execution.runtime import ensure_runtime
         from ai.execution.contract import contract_hash
+        from p2p.votes import judge_address
         try:
+            if judge_address(wallet.public_key) != wallet.address:
+                raise ValueError("Local ZYRA wallet address does not match its public key")
             ensure_runtime()
         except Exception as exc:
-            print(f"[Smart Judge] {exc}")
+            print(f"[Smart Judge] {exc}. A real ECDSA wallet is required for judge votes.")
             return
         
         # --- SYBIL RESISTANCE (STAKING CHECK) ---
@@ -712,7 +726,7 @@ try:
                 for traj_hash, traj_data in list(p2p_node.trajectories.items()):
                     if traj_hash not in validated_trajs and traj_data.get("status") == "pending_validation":
                         # Don't judge your own work
-                        if traj_data.get("wallet") != target_wallet:
+                        if traj_data.get("miner_identity") != wallet.address and traj_data.get("wallet") != target_wallet:
                             found_traj = (traj_hash, traj_data)
                             break
                 
@@ -753,58 +767,16 @@ try:
                     from p2p.protocol import MessageType, create_message
                     import asyncio
                     
-                    if is_valid:
-                        task["status"] = "validated"
-                        task["validation"] = reason
-                        asyncio.run_coroutine_threadsafe(p2p_node.broadcast(
-                            create_message(MessageType.TRAJECTORY_UPDATED, task)), p2p_node.loop)
-                        sig = wallet.sign_message(traj_hash) if hasattr(wallet, 'sign_message') else f"SIG_{wallet.address}_{traj_hash}"
-                        sig_payload = {
-                            "trajectory_hash": traj_hash,
-                            "judge_wallet": target_wallet,
-                            "signature": sig,
-                            "verdict": "VALID"
-                        }
-                        # Add signature locally and broadcast
-                        if traj_hash not in p2p_node.signatures:
-                            p2p_node.signatures[traj_hash] = []
-                        p2p_node.signatures[traj_hash].append(sig)
-                        
-                        sig_msg = create_message(MessageType.VALIDATION_SIGNATURE, sig_payload)
-                        asyncio.run_coroutine_threadsafe(p2p_node.broadcast(sig_msg), p2p_node.loop)
-                        
-                        # Update task status to completed
-                        task_id = task.get("task_id")
-                        if task_id and task_id in p2p_node.tasks:
-                            p2p_node.tasks[task_id]["status"] = "completed"
-                            p2p_node.tasks[task_id]["result_cid"] = task["trajectory_log"]
-                            update_msg = create_message(MessageType.TASK_UPDATED, p2p_node.tasks[task_id])
-                            asyncio.run_coroutine_threadsafe(p2p_node.broadcast(update_msg), p2p_node.loop)
-                        
-                        print(f"[\033[92mSUCCESS\033[0m] Validation PASSED and signature broadcasted to P2P network!\n")
+                    from p2p.votes import sign_vote
+                    error_text = reason if isinstance(reason, str) else reason.get("reason", str(reason))
+                    vote = sign_vote(wallet, task, "PASS" if is_valid else "FAIL", "" if is_valid else error_text)
+                    if p2p_node.add_signature(vote):
+                        count = len(p2p_node.signatures[traj_hash])
+                        print(f"[Judge -> Miner] {'PASS' if is_valid else 'FAIL'} vote sent ({count}/2). "
+                              f"{'Waiting for second judge.' if count < 2 else 'Quorum evaluated.'} "
+                              f"{error_text if not is_valid else ''}\n")
                     else:
-                        print(f"[\033[91mREJECTED\033[0m] Task failed validation. Reason: {reason}. Mempool cleared.\n")
-                        
-                        # Mark trajectory as rejected so it is not validated again
-                        if traj_hash in p2p_node.trajectories:
-                            p2p_node.trajectories[traj_hash]["status"] = "rejected"
-                            traj_update_msg = create_message(MessageType.TRAJECTORY_UPDATED, p2p_node.trajectories[traj_hash])
-                            asyncio.run_coroutine_threadsafe(p2p_node.broadcast(traj_update_msg), p2p_node.loop)
-                        
-                        # Reset the original task back to pending so another miner can work on it
-                        task_id = task.get("task_id")
-                        if task_id and task_id in p2p_node.tasks:
-                            retry = isinstance(reason, dict) and reason.get("retry", False)
-                            p2p_node.tasks[task_id]["status"] = "pending" if retry else "failed"
-                            
-                            # Auto-Correction Feedback Loop: Append judge's reason to the task prompt!
-                            old_prompt = p2p_node.tasks[task_id].get("prompt", "")
-                            feedback_text = f"\n\n[SYSTEM NOTE: A previous attempt at this task failed validation. Judge Feedback: '{reason}'. Please ensure this issue is fixed.]"
-                            if "[SYSTEM NOTE" not in old_prompt:
-                                p2p_node.tasks[task_id]["prompt"] = old_prompt + feedback_text
-                                
-                            update_msg = create_message(MessageType.TASK_UPDATED, p2p_node.tasks[task_id])
-                            asyncio.run_coroutine_threadsafe(p2p_node.broadcast(update_msg), p2p_node.loop)
+                        print("[Judge] Vote was not accepted; check task/trajectory identity and wallet keys.")
                     
                     time.sleep(2)
                 else:
@@ -1486,10 +1458,18 @@ os.system("start cmd /k zyra")
                         import time
                         from p2p.protocol import MessageType, create_message
                         import asyncio
+                        preferred_task_id = None
                         while True:
                             # Scan local P2P mempool for pending tasks
                             found_task = None
+                            if preferred_task_id:
+                                candidate = p2p_node.tasks.get(preferred_task_id)
+                                if candidate and candidate.get("status") == "pending":
+                                    found_task = candidate
+                                preferred_task_id = None
                             for tid, tdata in list(p2p_node.tasks.items()):
+                                if found_task:
+                                    break
                                 if tdata.get("status") == "pending":
                                     found_task = tdata
                                     break
@@ -1514,13 +1494,12 @@ os.system("start cmd /k zyra")
                             
                             if task_status == "completed":
                                 print(f"\033[92m[Miner]\033[0m Task {task_id} validated successfully! Reward credited.\n")
-                            elif task_status == "pending" and "[SYSTEM NOTE" in task_prompt:
+                            elif task_status == "pending" and p2p_node.tasks[task_id].get("feedback"):
                                 # Validator rejected with feedback - retry same task with feedback
-                                feedback_start = task_prompt.find("[SYSTEM NOTE")
-                                feedback = task_prompt[feedback_start:].strip()
-                                print(f"\033[93m[Miner]\033[0m Task {task_id} rejected. Feedback: {feedback[:200]}...\n")
+                                feedback = p2p_node.tasks[task_id]["feedback"]
+                                print(f"\033[93m[Miner]\033[0m Task {task_id} rejected. Feedback: {feedback}\n")
                                 print(f"\033[96m[Miner]\033[0m Retrying same task with validator feedback...\n")
-                                # Don't advance - loop will re-pick this same task (still pending)
+                                preferred_task_id = task_id
                                 continue
                             elif task_status == "failed":
                                 print(f"\033[91m[Miner]\033[0m Task {task_id} permanently failed (no retry). Moving on.\n")

@@ -52,6 +52,7 @@ ai/training/scheduler.py
 ai/training/trainer.py
 p2p/network.py
 p2p/protocol.py
+p2p/votes.py
 tests/test_attention.py
 tests/test_baseline_model.py
 tests/test_bpe.py
@@ -75,6 +76,7 @@ tests/test_paths.py
 tests/test_pretraining_safety.py
 tests/test_rms_norm.py
 tests/test_rope.py
+tests/test_signed_quorum.py
 tests/test_tokenizer.py
 tests/test_tokenizer_roundtrip.py
 tests/test_tokenizer_serialization.py

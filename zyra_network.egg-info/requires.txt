@@ -10,6 +10,8 @@ python-dotenv
 prompt_toolkit>=3.0.0
 requests
 websockets
+colorama
+ecdsa<1,>=0.19
 
 [desktop]
 PySide6>=6.5.0

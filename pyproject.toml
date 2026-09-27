@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zyra-network"
-version = "2.1.51"
+version = "2.1.52"
 description = "A powerful, self-organizing decentralized AI network client."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,7 +21,8 @@ dependencies = [
     "prompt_toolkit>=3.0.0",
     "requests",
     "websockets",
-    "colorama"
+    "colorama",
+    "ecdsa>=0.19,<1"
 ]
 
 [project.optional-dependencies]

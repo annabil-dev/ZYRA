@@ -22,10 +22,19 @@ def main():
     else:
         print("✅ Tidak ada folder dist.")
         
-    # 2. Push ke Github
-    print("\n\033[93m[2/4] Nge-push ke GitHub...\033[0m")
+    # 2. Build first so a broken release never gets pushed.
+    print("\n\033[93m[2/4] Mem-build package...\033[0m")
+    result = subprocess.run([sys.executable, "-m", "build"], capture_output=False)
+    if result.returncode != 0:
+        print("\033[91m❌ Build gagal! Source belum dipush atau diupload.\033[0m")
+        return
+
+    # 3. Push only release inputs. Never stage build outputs, local env, archives, or secrets.
+    print("\n\033[93m[3/4] Nge-push source release ke GitHub...\033[0m")
     try:
-        subprocess.run(["git", "add", "."], check=True)
+        release_paths = ["README.md", "pyproject.toml", "requirements.txt", "publish.py", "ai", "p2p",
+                         "zyra_cmd", "tests", "zyra_network.egg-info"]
+        subprocess.run(["git", "add", "-A", "--", *release_paths], check=True)
         # Parse version from pyproject.toml
         version = "update"
         with open("pyproject.toml", "r") as f:
@@ -33,7 +42,11 @@ def main():
                 if line.startswith("version ="):
                     version = line.split('"')[1]
                     break
-        subprocess.run(["git", "commit", "-m", f"Auto-publish v{version}"], check=False) # check=False in case there are no changes
+        staged = subprocess.run(["git", "diff", "--cached", "--quiet"])
+        if staged.returncode == 0:
+            print("❌ Tidak ada perubahan release yang di-stage; batal agar tidak membuat publish kosong.")
+            return
+        subprocess.run(["git", "commit", "-m", f"Auto-publish v{version}"], check=True)
         subprocess.run(["git", "push", "origin", "main"], check=True)
         print(f"✅ Berhasil push ke GitHub dengan pesan: Auto-publish v{version}")
     except subprocess.CalledProcessError as e:
@@ -41,13 +54,6 @@ def main():
         return
 
     
-    # 3. Build ulang paket
-    print("\n\033[93m[3/4] Mem-build package...\033[0m")
-    result = subprocess.run([sys.executable, "-m", "build"], capture_output=False)
-    if result.returncode != 0:
-        print("\033[91m❌ Build gagal! Silakan cek error di atas.\033[0m")
-        return
-
     # 4. Mengecek kredensial PyPI di konfigurasi komputer (.pypirc)
     pypirc_path = Path.home() / ".pypirc"
     if not pypirc_path.exists():
