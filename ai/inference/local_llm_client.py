@@ -61,8 +61,6 @@ class LocalLLMGenerator:
         
         self.is_interrupted = False
         
-        from PySide6.QtCore import QSettings
-        settings = QSettings("ZYRA", "ZYRA_AI")
         default_prompt = (
             "Kamu adalah asisten AI lokal yang cerdas, ramah, dan membantu. "
             "Selalu balas menggunakan bahasa yang sama dengan pengguna. "
@@ -70,7 +68,20 @@ class LocalLLMGenerator:
             "Jika pengguna berbicara bahasa Inggris, balas dalam bahasa Inggris. "
             "Berikan jawaban yang jelas, ringkas, dan informatif."
         )
-        system_prompt = settings.value("system_prompt", default_prompt)
+        try:
+            from PySide6.QtCore import QSettings
+            system_prompt = QSettings("ZYRA", "ZYRA_AI").value("system_prompt", default_prompt)
+        except ImportError:
+            system_prompt = default_prompt
+
+        # CLI swarm uses its own Docker commands; it does not need legacy desktop tools.
+        TOOLS_SCHEMA = []
+        execute_tool = None
+        if use_tools:
+            try:
+                from app.core.tools import TOOLS_SCHEMA, execute_tool
+            except ImportError:
+                use_tools = False
         
         # INJECT DATETIME CONTEXT
         import datetime
@@ -85,7 +96,7 @@ class LocalLLMGenerator:
             if memory_context:
                 system_prompt = f"{system_prompt}\n\n{memory_context}"
         except Exception as e:
-            self.logger.error(f"Failed to load long-term memory context: {e}")
+            self.logger.debug(f"Long-term desktop memory unavailable: {e}")
             
         # INJECT AGI INSTRUCTIONS (ONLY IF TOOLS ENABLED)
         if use_tools:
@@ -127,7 +138,6 @@ class LocalLLMGenerator:
                     self.logger.error(f"Failed to encode image {img_path}: {e}")
             messages.append({"role": "user", "content": content_list})
         
-        from app.core.tools import TOOLS_SCHEMA, execute_tool
         import json
         
         start_time = time.time()

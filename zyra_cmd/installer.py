@@ -12,7 +12,11 @@ def is_ollama_running():
     except:
         return False
 
-def check_and_install_ollama():
+def check_and_install_ollama(state=None, force_prompt=False):
+    from zyra_cmd.client_state import ClientState
+    if state is None:
+        state = ClientState()
+
     if is_ollama_running():
         return True
         
@@ -41,12 +45,18 @@ def check_and_install_ollama():
         print("\033[91m[Error]\033[0m Failed to start Ollama. Please start it manually.")
         return False
         
+    # Remember the first answer across terminals and package upgrades. /engine
+    # explicitly opts back in; an externally installed engine is still detected above.
+    if state.get_setting("ollama_install_prompted", False) and not force_prompt:
+        return False
+
     # Ask to install
     print("\n\033[91m[System]\033[0m Ollama AI Engine is not installed on this system.")
-    print("Ollama is required as the local engine for ZYRA CLI.")
+    print("Ollama is needed for local AI/mining. Client commands do not require it.")
     ans = input("\033[96mDo you want ZYRA to automatically download and install Ollama? (Y/n): \033[0m").strip().lower()
-    if ans == 'n':
-        print("\033[93mInstallation skipped. ZYRA will run in Client-Only mode.\033[0m")
+    state.set_setting("ollama_install_prompted", True)
+    if ans in ('n', 'no'):
+        print("\033[93mInstallation skipped. Client-Only mode. Use /engine to install later.\033[0m")
         return False
         
     if sys.platform.startswith("linux"):

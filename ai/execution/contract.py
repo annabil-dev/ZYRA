@@ -1,0 +1,194 @@
+"""Client-owned acceptance criteria. No code from the submitted workspace is imported."""
+
+import hashlib
+import json
+import re
+import shlex
+from pathlib import Path, PurePosixPath
+
+RUNTIME = "zyra-python-v1"
+PROFILES = {"python", "flask-web"}
+IGNORED_DIRS = {"__pycache__", ".git", ".venv", "venv", "node_modules"}
+
+
+def relative_path(value):
+    if not isinstance(value, str) or not value or "\\" in value or ":" in value:
+        raise ValueError("Use a relative workspace path with forward slashes")
+    path = PurePosixPath(value)
+    if path.is_absolute() or ".." in path.parts or str(path) != value:
+        raise ValueError(f"Invalid workspace path: {value}")
+    return value
+
+
+def validate_contract(value):
+    contract = json.loads(json.dumps(value))
+    if not isinstance(contract, dict) or contract.get("version") != 1:
+        raise ValueError("Acceptance contract version must be 1")
+    unknown = set(contract) - {"version", "runtime", "profile", "entrypoint", "args", "port",
+                               "http_checks", "stdout_contains", "browser_contains"}
+    if unknown:
+        raise ValueError(f"Unknown acceptance fields: {sorted(unknown)}")
+    if contract.get("runtime") != RUNTIME or contract.get("profile") not in PROFILES:
+        raise ValueError("Supported profiles: python and flask-web, runtime zyra-python-v1")
+    relative_path(contract.get("entrypoint"))
+    if not contract["entrypoint"].endswith(".py"):
+        raise ValueError("Entrypoint must be a Python file")
+    args = contract.setdefault("args", [])
+    if not isinstance(args, list) or len(args) > 20 or not all(isinstance(a, str) for a in args):
+        raise ValueError("args must be a list of strings")
+    checks = contract.setdefault("http_checks", [])
+    if not isinstance(checks, list) or len(checks) > 20:
+        raise ValueError("http_checks must be a list of at most 20 checks")
+    if contract["profile"] == "flask-web":
+        if not isinstance(contract.get("port"), int) or not 1024 <= contract["port"] <= 65535:
+            raise ValueError("Web port must be between 1024 and 65535")
+        if not checks or not any(c.get("path") == "/" for c in checks if isinstance(c, dict)):
+            raise ValueError("Web contracts must check the home page /")
+    elif checks:
+        raise ValueError("HTTP checks require the flask-web profile")
+    for check in checks:
+        if not isinstance(check, dict):
+            raise ValueError("Each HTTP check must be an object")
+        unknown = set(check) - {"path", "status", "content_type", "contains", "json_keys", "json_equals", "browser_fetch"}
+        if unknown:
+            raise ValueError(f"Unknown HTTP check fields: {sorted(unknown)}")
+        path = check.get("path", "")
+        if not isinstance(path, str) or not path.startswith("/") or path.startswith("//") or "#" in path:
+            raise ValueError("HTTP check paths must be local paths starting with /")
+        if not isinstance(check.get("status", 200), int) or not 200 <= check.get("status", 200) <= 599:
+            raise ValueError("Invalid expected HTTP status")
+        if not isinstance(check.get("content_type", ""), str):
+            raise ValueError("content_type must be a string")
+        for field in ("contains", "json_keys"):
+            if not isinstance(check.get(field, []), list) or not all(isinstance(x, str) for x in check.get(field, [])):
+                raise ValueError(f"{field} must be a list of strings")
+        if "json_equals" in check and not isinstance(check["json_equals"], dict):
+            raise ValueError("json_equals must be an object of expected top-level fields")
+        if not isinstance(check.get("browser_fetch", False), bool):
+            raise ValueError("browser_fetch must be a boolean")
+    output = contract.setdefault("stdout_contains", [])
+    if not isinstance(output, list) or not all(isinstance(s, str) for s in output):
+        raise ValueError("stdout_contains must be a list of strings")
+    visible = contract.setdefault("browser_contains", [])
+    if not isinstance(visible, list) or not all(isinstance(s, str) for s in visible):
+        raise ValueError("browser_contains must be a list of strings")
+    if contract["profile"] == "python" and visible:
+        raise ValueError("browser_contains requires flask-web")
+    return contract
+
+
+def make_contract(prompt, web=False):
+    web = web or bool(re.search(r"\b(web|website|flask|dashboard|frontend|backend|html|http)\b", prompt, re.I))
+    contract = {"version": 1, "runtime": RUNTIME, "profile": "flask-web" if web else "python",
+                "entrypoint": "app.py" if web else "main.py", "args": [], "http_checks": []}
+    if web:
+        contract["port"] = 8000
+        contract["http_checks"] = [{"path": "/", "status": 200, "content_type": "text/html", "contains": ["<html"]}]
+    return validate_contract(contract)
+
+
+def contract_hash(contract):
+    payload = json.dumps(validate_contract(contract), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def startup_command(contract):
+    return shlex.join(["python", contract["entrypoint"], *contract["args"]])
+
+
+def parse_submission(text):
+    """Preserve Windows paths and prompt quoting; only parse leading CLI options."""
+    text = text.strip()
+    if text.startswith("--spec "):
+        match = re.match(r'''--spec\s+(?:"([^"]+)"|'([^']+)'|(\S+))\s+(.+)''', text, re.S)
+        if not match:
+            raise ValueError('/submit --spec "acceptance.json" <task>')
+        path = next(part for part in match.groups()[:3] if part is not None)
+        contract = validate_contract(json.loads(Path(path).expanduser().read_text(encoding="utf-8")))
+        return match.group(4).strip(), contract
+    web = text.startswith("--web ")
+    if web:
+        text = text[len("--web "):].strip()
+    if not text or text.startswith("--"):
+        raise ValueError("Use /submit [--web | --spec <file>] <task>")
+    return text, make_contract(text, web=web)
+
+
+def deliverable_files(root):
+    root = Path(root)
+    for file in sorted(root.rglob("*")):
+        relative = file.relative_to(root)
+        if any(part in IGNORED_DIRS for part in relative.parts) or file.suffix == ".pyc":
+            continue
+        if file.is_symlink():
+            raise ValueError(f"Workspace symlinks are not supported: {relative}")
+        if file.is_file():
+            yield relative.as_posix()
+
+
+def validate_deliverables(root, contract):
+    root = Path(root)
+    contract = validate_contract(contract)
+    for name in ("README.md", "requirements.txt", "zyra.json", "test_suite.py", contract["entrypoint"]):
+        if not (root / name).is_file():
+            raise ValueError(f"Missing required deliverable: {name}")
+    manifest = json.loads((root / "zyra.json").read_text(encoding="utf-8"))
+    for key in ("runtime", "profile", "entrypoint"):
+        if manifest.get(key) != contract[key]:
+            raise ValueError(f"zyra.json {key} does not match the client's contract")
+    if manifest.get("acceptance_hash") != contract_hash(contract):
+        raise ValueError("zyra.json acceptance_hash does not match the client's contract")
+    expected_command = startup_command(contract)
+    if manifest.get("run_command") != expected_command:
+        raise ValueError(f"Document run_command as: {expected_command}")
+    files = manifest.get("files")
+    if not isinstance(files, dict):
+        raise ValueError("zyra.json must describe each deliverable in files")
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    for heading in ("Setup", "Run", "Test", "Files", "Limitations"):
+        if not re.search(r"^##\s+" + heading + r"\s*$", readme, re.M | re.I):
+            raise ValueError(f"README.md needs a '## {heading}' section")
+    if expected_command not in readme or "python -m unittest discover" not in readme:
+        raise ValueError("README.md must contain the actual run and test commands")
+    for name in deliverable_files(root):
+        if not isinstance(files.get(name), str) or not files[name].strip() or name not in readme:
+            raise ValueError(f"Document the purpose of {name} in zyra.json and README.md")
+    for name in files:
+        relative_path(name)
+        if not (root / name).is_file():
+            raise ValueError(f"zyra.json describes a missing file: {name}")
+    # Dependencies must already exist in the versioned image. No package install from miner input.
+    allowed = {"flask==3.1.3"}
+    dependencies = set()
+    for line in (root / "requirements.txt").read_text(encoding="utf-8").splitlines():
+        requirement = line.strip().lower()
+        if requirement and not requirement.startswith("#"):
+            if requirement not in allowed:
+                raise ValueError(f"Dependency unavailable in {RUNTIME}: {line}. Do not replace it with a mock.")
+            dependencies.add(requirement)
+    if contract["profile"] == "flask-web" and "flask==3.1.3" not in dependencies:
+        raise ValueError("Web deliverables must declare Flask==3.1.3")
+    return manifest
+
+
+def delivery_instructions(contract):
+    contract = validate_contract(contract)
+    return f"""DELIVERY CONTRACT (client-owned; do not weaken or replace it):
+{json.dumps(contract, indent=2)}
+Acceptance hash: {contract_hash(contract)}
+Runtime {RUNTIME}: Python 3.11, standard library, real Flask 3.1.3; no internet at task execution.
+Do not fake libraries, replace the application's runtime with mocks, or skip failing tests.
+For flask-web: use real Flask; start via `{startup_command(contract)}`, read PORT from the environment
+(default {contract.get('port', 8000)}), listen on 0.0.0.0, debug=False, use_reloader=False.
+Use local frontend assets only. The judge opens a real Chromium browser and rejects JS/network errors.
+For python: the entrypoint must terminate successfully without interactive input; use the contract args.
+Always provide test_suite.py AND run all test*.py using `python -m unittest discover -v`.
+Always provide requirements.txt (Flask==3.1.3 for web; empty/comment-only for standard-library scripts).
+Always provide README.md with headings ## Setup, ## Run, ## Test, ## Files, ## Limitations.
+Document installation, exact startup command, port/URL, test command, all file purposes, and any dummy data.
+Always provide zyra.json with runtime, profile, entrypoint copied from the contract, acceptance_hash,
+run_command (exactly {startup_command(contract)!r}), and files (every deliverable path -> purpose).
+List README.md and zyra.json themselves too. Do not write verification claims without running the app.
+The judge checks real startup and client HTTP/output expectations independently of your unit tests.
+If a required framework/dependency is unsupported, report that limitation instead of producing fake substitutes.
+"""

@@ -40,6 +40,7 @@ class P2PNode:
         self.file_transfer_callbacks = {} # cid -> asyncio.Future()
         
         self.on_trajectory_received = None # Callback function
+        self.on_task_updated = None # Persist locally submitted task progress
         
     async def start(self):
         self.loop = asyncio.get_running_loop()
@@ -187,12 +188,7 @@ class P2PNode:
                 msg = parse_message(message_str)
                 if not msg: continue
                 
-                # Deduplication to avoid infinite gossip loops
-                msg_hash = hash(message_str)
-                if msg_hash in self.seen_messages:
-                    continue
-                self.seen_messages.add(msg_hash)
-                
+                # handle_message owns deduplication for both direct and relay traffic.
                 await self.handle_message(msg, websocket, message_str)
         except websockets.exceptions.ConnectionClosed:
             logging.info("Peer connection closed.")
@@ -217,6 +213,7 @@ class P2PNode:
             if task_id not in self.tasks:
                 logging.info(f"Received NEW_TASK: {task_id}")
                 self.tasks[task_id] = payload
+                self._notify_task_updated(self.tasks[task_id])
                 await self.broadcast(raw_msg_str, exclude=websocket)
                 
         elif msg_type == MessageType.TASK_UPDATED:
@@ -235,9 +232,11 @@ class P2PNode:
                 
                 if needs_update:
                     logging.info(f"Received TASK_UPDATED: {task_id} -> {new_status}")
+                    self._notify_task_updated(self.tasks[task_id])
                     await self.broadcast(raw_msg_str, exclude=websocket)
             else:
                 self.tasks[task_id] = payload
+                self._notify_task_updated(self.tasks[task_id])
                 await self.broadcast(raw_msg_str, exclude=websocket)
                 
         elif msg_type == MessageType.NEW_TRAJECTORY:
@@ -286,7 +285,9 @@ class P2PNode:
             
         elif msg_type == MessageType.MEMPOOL_DATA:
             logging.info("Received MEMPOOL_DATA sync")
-            self.tasks.update(payload.get("tasks", {}))
+            for task_id, task_data in payload.get("tasks", {}).items():
+                self.tasks.setdefault(task_id, {}).update(task_data)
+                self._notify_task_updated(self.tasks[task_id])
             self.trajectories.update(payload.get("trajectories", {}))
             # Merge signatures
             for t_hash, sigs in payload.get("signatures", {}).items():
@@ -331,6 +332,9 @@ class P2PNode:
                                 self.file_transfer_callbacks[cid].set_result(True)
                     except Exception as e:
                         print(f"[\033[91mERROR\033[0m] Failed to assemble file {cid}: {e}")
+                        future = self.file_transfer_callbacks.get(cid)
+                        if future is not None and not future.done():
+                            future.set_exception(e)
                 else:
                     dl["chunks"][chunk_index] = data
             else:
@@ -374,6 +378,8 @@ class P2PNode:
     async def request_file(self, cid, dest_path):
         """Request a file from the P2P network and wait for completion."""
 #         print(f"[\033[93mDEBUG P2P\033[0m] request_file called for {cid}")
+        if cid in self.downloading_files:
+            raise RuntimeError(f"A download for {cid} is already in progress")
         self.downloading_files[cid] = {"chunks": {}, "path": dest_path}
         future = self.loop.create_future()
         self.file_transfer_callbacks[cid] = future
@@ -381,12 +387,13 @@ class P2PNode:
         logging.info(f"Broadcasting FILE_REQUEST for {cid}")
         msg = create_message(MessageType.FILE_REQUEST, {"cid": cid})
 #         print(f"[\033[93mDEBUG P2P\033[0m] Broadcasting FILE_REQUEST msg...")
-        await self.broadcast(msg)
-#         print(f"[\033[93mDEBUG P2P\033[0m] Broadcast complete! Waiting for future...")
-        
-        # Wait until file is assembled
-        await future
-        return dest_path
+        try:
+            await self.broadcast(msg)
+            await asyncio.wait_for(future, timeout=120)
+            return dest_path
+        finally:
+            self.downloading_files.pop(cid, None)
+            self.file_transfer_callbacks.pop(cid, None)
 
     async def send_file_chunks(self, cid, websocket):
         """Read local file and send chunks directly over websocket."""
@@ -424,6 +431,13 @@ class P2PNode:
             logging.error(f"Error sending file {cid}: {e}")
 
     # --- Public API for Local Node ---
+    def _notify_task_updated(self, task):
+        if self.on_task_updated:
+            try:
+                self.on_task_updated(dict(task))
+            except Exception:
+                logging.exception("Could not persist client task update")
+
     def _run_coroutine(self, coro):
         try:
             loop = asyncio.get_running_loop()
@@ -464,6 +478,7 @@ class P2PNode:
         while True:
             await asyncio.sleep(60)
             self.seen_messages.clear() # Prevent memory leak
+            await self.broadcast(create_message(MessageType.SYNC_MEMPOOL))
 
 if __name__ == "__main__":
     node = P2PNode(port=5001)

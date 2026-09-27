@@ -75,103 +75,39 @@ class PoUWValidator:
         return proof_payload
 
     @classmethod
-    def evaluate_trajectory_with_llm(cls, trajectory_data: str, model_name: str = None, p2p_node=None) -> tuple[bool, str]:
-        """
-        Acts as the Local AI Smart Judge (Execution-Based). 
-        Downloads the workspace ZIP from P2P, extracts it, and runs pytest to mathematically prove success.
-        """
-        import tempfile
-        import os
-        import subprocess
-        import shutil
-        import re
+    def evaluate_trajectory_with_llm(cls, trajectory_data: str, model_name: str = None,
+                                     p2p_node=None, acceptance=None):
+        """Download and independently test against the original client's acceptance contract."""
         import asyncio
-        import zipfile
-        import glob
+        import tempfile
+        from pathlib import Path
+        from ai.execution.contract import validate_contract
+        from ai.execution.runtime import validate_workspace
+        from zyra_cmd.client_tasks import extract_workspace
 
         try:
-            sandbox = tempfile.mkdtemp(prefix="zyra_judge_")
-            zip_path = os.path.join(sandbox, "workspace.zip")
-            
-            # Download file from P2P (via WebSocket Relay)
-            cid = trajectory_data  # In real P2P, trajectory_log field holds the CID
-            if not p2p_node:
-                return False, "P2P Node not available for downloading workspace."
-                
-            print(f"[\033[96mSmart Judge\033[0m] Requesting file {cid} from P2P Network (Relay)...")
+            contract = validate_contract(acceptance)
+        except (ValueError, TypeError, AttributeError) as exc:
+            return False, {"status": "FAILED", "reason": f"Missing/invalid client acceptance contract: {exc}. Resubmit the task.", "retry": False}
+        if not p2p_node:
+            return False, {"status": "UNAVAILABLE", "reason": "P2P node unavailable", "retry": False}
+
+        with tempfile.TemporaryDirectory(prefix="zyra_judge_") as directory:
+            archive = Path(directory) / "workspace.zip"
+            workspace = Path(directory) / "workspace"
+            workspace.mkdir()
+            future = None
             try:
-                future = asyncio.run_coroutine_threadsafe(p2p_node.request_file(cid, zip_path), p2p_node.loop)
-                future.result(timeout=120) # wait up to 2 minutes
-            except Exception as e:
-                return False, f"Failed to download workspace via P2P Relay: {e}"
-                
-            print(f"[\033[96mSmart Judge\033[0m] Extracting workspace...")
+                print(f"[Smart Judge] Downloading {trajectory_data} for independent runtime validation...")
+                future = asyncio.run_coroutine_threadsafe(
+                    p2p_node.request_file(trajectory_data, str(archive)), p2p_node.loop)
+                future.result(timeout=120)
+            except Exception as exc:
+                if future is not None:
+                    future.cancel()
+                return False, {"status": "UNAVAILABLE", "reason": f"Workspace download unavailable: {exc}", "retry": False}
             try:
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(sandbox)
-            except zipfile.BadZipFile:
-                return False, "Downloaded file is not a valid ZIP archive."
-                
-            # Read extracted files
-            files_to_write = {}
-            for file_path in glob.glob(os.path.join(sandbox, "**", "*"), recursive=True):
-                if os.path.isfile(file_path) and not file_path.endswith(".zip"):
-                    rel_path = os.path.relpath(file_path, sandbox)
-                    try:
-                        with open(file_path, 'r', encoding='utf-8') as f:
-                            files_to_write[rel_path] = f.read()
-                    except Exception:
-                        pass # Ignore binary files
-                        
-            initial_prompt = "Validate if the code inside the workspace correctly fulfills the requirements of the task."
-                        
-            if not files_to_write:
-                return False, "Workspace is empty. Invalid."
-                
-            test_path = os.path.join(sandbox, "test_suite.py")
-            if not os.path.exists(test_path):
-                return False, "Trajectory rejected: Planner failed to generate test_suite.py (TDD violation)."
-                
-            try:
-                print(f"[\033[96mSmart Judge\033[0m] Running Deterministic TDD Validation in {sandbox} ...")
-                command = "python -m unittest test_suite.py"
-                docker_cmd = [
-                    "docker", "run", "--rm", 
-                    "--network", "none", 
-                    "--memory", "512m", 
-                    "--cpus", "0.5",
-                    "-v", f"{sandbox}:/app", 
-                    "-w", "/app", 
-                    "python:3.10-slim", 
-                    "sh", "-c", command
-                ]
-                
-                try:
-                    subprocess.run(["docker", "--version"], capture_output=True, check=True)
-                    use_docker = True
-                except (subprocess.CalledProcessError, FileNotFoundError):
-                    use_docker = False
-                    
-                if use_docker:
-                    result = subprocess.run(docker_cmd, capture_output=True, text=True, timeout=60)
-                else:
-                    print(f"\033[91m[WARNING]\033[0m Docker not found. Falling back to local INSECURE validation in {sandbox}")
-                    result = subprocess.run(["python", "-m", "unittest", "test_suite.py"], cwd=sandbox, capture_output=True, text=True, timeout=30)
-                
-                if result.returncode == 0:
-                    print(f"[\033[92mSmart Judge\033[0m] Deterministic TDD Validation PASSED!")
-                    return True, "Execution-based validation passed."
-                else:
-                    print(f"[\033[91mSmart Judge\033[0m] Deterministic TDD Validation FAILED.\n\033[90mUnittest Output:\n{result.stdout.strip()[:1000]}\n{result.stderr.strip()[:1000]}\033[0m")
-                    return False, f"Unittest failed. Tests did not pass."
-                    
-            except subprocess.TimeoutExpired:
-                return False, "Validation script timed out."
-            except FileNotFoundError:
-                return False, "Python/Docker not installed on validator node."
-                    
-            finally:
-                shutil.rmtree(sandbox, ignore_errors=True)
-                
-        except Exception as e:
-            return False, f"AI Judge Exception: {e}"
+                extract_workspace(archive, workspace)
+                return validate_workspace(workspace, contract)
+            except Exception as exc:
+                return False, {"status": "FAILED", "reason": f"Invalid workspace: {exc}", "retry": True}

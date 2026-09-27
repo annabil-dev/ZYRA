@@ -178,6 +178,31 @@ def process_prompt(llm, prompt, history, wallet, ledger, model_name):
 
 
 def run_automode(llm, initial_task: str, history: list, wallet: ZyraWallet, ledger: ZyraLedger, model_name: str, auto_yes: bool = False, planner_model: str = None, coder_model: str = None, task_id: str = None):
+    global p2p_node
+    import uuid
+    from ai.execution.contract import make_contract, validate_contract, contract_hash, delivery_instructions, deliverable_files
+    from ai.execution.runtime import ensure_runtime, execute_miner_command, validate_workspace
+    try:
+        runtime_image = ensure_runtime()
+        if task_id:
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", task_id):
+                raise ValueError("Invalid task ID")
+            acceptance = validate_contract(p2p_node.tasks[task_id].get("acceptance"))
+            if p2p_node.tasks[task_id].get("acceptance_hash") != contract_hash(acceptance):
+                raise ValueError("Task acceptance hash mismatch")
+        else:
+            task_id = str(uuid.uuid4())
+            acceptance = make_contract(initial_task)
+            if 'p2p_node' in globals():
+                p2p_node.add_task({"task_id": task_id, "prompt": initial_task, "status": "mining",
+                                   "client": wallet.metamask_address or wallet.address,
+                                   "acceptance": acceptance, "acceptance_hash": contract_hash(acceptance)})
+    except Exception as exc:
+        print(f"[Runtime] Cannot start task: {exc}")
+        return False
+    delivery_rules = delivery_instructions(acceptance)
+    work_verified = False
+    validation_report = None
     # Auto-detect specialist models if not provided
     if not planner_model or not coder_model:
         try:
@@ -219,13 +244,14 @@ import unittest
 <ALL_DONE>
 8. If the system asks you to confirm completion, and you are 100% sure, reply exactly:
 <CONFIRM_DONE>"""
+    planner_sys += "\n" + delivery_rules
     planner_history.append({"role": "user", "content": planner_sys})
     
-    coder_sys = """You are the CODER AGENT running in a SECURE LINUX DOCKER SANDBOX (python:3.10-slim).
+    coder_sys = """You are the CODER AGENT running in the shared ZYRA Python Docker runtime.
 You will receive instructions from the PLANNER.
 RULES:
 1. You are on Linux. DO NOT use Windows/PowerShell commands. Use standard Linux commands (e.g., `ls`, `cat`, `python`).
-2. CRITICAL RULE: Your environment is ephemeral and has NO internet access (network=none). Do NOT try to `pip install` packages or download files. Use standard libraries.
+2. Your environment has NO internet at execution time. Real Flask is PREINSTALLED. Use the installed libraries or standard library; never replace required libraries with mocks. Do not run pip install.
 3. You are executing in the `/app` directory. Any files you write using <WRITE_FILE> will be available here.
 4. To execute a command, output it exactly like this:
 <CMD>your command</CMD>
@@ -237,6 +263,7 @@ print("hello")
 6. ANTI-LAZINESS POLICY: If the Planner asks you to VERIFY or CHECK a file/result, you MUST execute a command (like `cat` or running a script) in the SAME turn to prove it works.
 7. When the delegated step is fully complete, output exactly:
 [STEP_COMPLETE]"""
+    coder_sys += "\n" + delivery_rules
     coder_history.append({"role": "user", "content": coder_sys})
     
     total_tokens_automode = 0
@@ -308,7 +335,7 @@ print("hello")
                     print(f"\033[93m[Planner Agent]\033[0m Writing file: \033[96m{file_path}\033[0m")
                     try:
                         abs_path = os.path.abspath(os.path.join(sandbox_dir, file_path))
-                        if not abs_path.startswith(sandbox_dir):
+                        if not Path(abs_path).is_relative_to(Path(sandbox_dir)):
                             raise Exception("Path traversal denied")
                         os.makedirs(os.path.dirname(abs_path) or '.', exist_ok=True)
                         with open(abs_path, 'w', encoding='utf-8') as f:
@@ -320,27 +347,22 @@ print("hello")
         
         delegate_matches = re.findall(r"<DELEGATE>(.*?)(?:</DELEGATE>|$)", planner_output, re.DOTALL)
         
-        if "<CONFIRM_DONE>" in planner_output and not delegate_matches:
-            print(f"\033[92m[Multi-Agent Swarm]\033[0m Task completed and confirmed successfully!\n")
-            break
-
-        if "<ALL_DONE>" in planner_output and not delegate_matches:
+        if any(tag in planner_output for tag in ("<ALL_DONE>", "<CONFIRM_DONE>")) and not delegate_matches:
             if successful_delegations == 0:
                 print(f"\033[93m[Planner Agent]\033[0m Attempted to finish before any tasks were completed. Rejected.")
                 planner_history.append({"role": "user", "content": "You cannot finish yet. You must delegate at least one step to the Coder using <DELEGATE> and it must complete successfully first."})
                 continue
-            else:
-                # To prevent infinite loop if Planner forgets CONFIRM_DONE, we accept ALL_DONE again
-                if any("Are you absolutely sure" in msg["content"] for msg in planner_history):
-                    print(f"\033[92m[Multi-Agent Swarm]\033[0m Task completed and confirmed successfully!\n")
-                    break
-                else:
-                    print(f"\033[93m[Anti-Laziness]\033[0m Verifying completion...")
-                    planner_history.append({
-                        "role": "user", 
-                        "content": f"Are you absolutely sure you have completed ALL parts of the original task: '{initial_task}'? If you missed any step, you MUST continue using <DELEGATE>. If you are 100% sure everything is done, reply with <CONFIRM_DONE>."
-                    })
-                    continue
+            print("[Runtime] Checking documentation, all tests, and actual application startup...")
+            work_verified, validation_report = validate_workspace(sandbox_dir, acceptance)
+            if work_verified:
+                print("[Runtime] Delivery checks passed. Ready for independent network validation.\n")
+                break
+            feedback = str(validation_report)[-6000:]
+            planner_history.append({"role": "user", "content": f"DELIVERY REJECTED: {feedback}. Delegate fixes; do not weaken the client acceptance contract."})
+            print(f"[Runtime] Delivery rejected: {validation_report.get('reason')}")
+            if validation_report.get("status") == "UNAVAILABLE":
+                break
+            continue
         if not delegate_matches or not any(m.strip() for m in delegate_matches):
             spam_text = planner_output.strip()
             if len(spam_text) > 300:
@@ -403,34 +425,7 @@ print("hello")
                                 break
                                 
                         try:
-                            # Build Docker Sandbox Command
-                            docker_cmd = [
-                                "docker", "run", "--rm", 
-                                "--network", "none", 
-                                "--memory", "512m", 
-                                "--cpus", "0.5",
-                                "-v", f"{sandbox_dir}:/app", 
-                                "-w", "/app", 
-                                "python:3.10-slim", 
-                                "sh", "-c", command
-                            ]
-                            
-                            # Check if docker exists first
-                            try:
-                                subprocess.run(["docker", "--version"], capture_output=True, check=True)
-                                use_docker = True
-                            except (subprocess.CalledProcessError, FileNotFoundError):
-                                use_docker = False
-                                
-                            if use_docker:
-                                result = subprocess.run(docker_cmd, capture_output=True, text=True, timeout=60)
-                            else:
-                                # Fallback to local execution if Docker is not installed (WARNING: Insecure)
-                                print(f"\033[91m[WARNING]\033[0m Docker not found. Falling back to local INSECURE execution in {sandbox_dir}")
-                                if os.name == 'nt':
-                                    result = subprocess.run(["powershell", "-Command", command], cwd=sandbox_dir, capture_output=True, text=True, timeout=60)
-                                else:
-                                    result = subprocess.run(command, shell=True, cwd=sandbox_dir, capture_output=True, text=True, timeout=60)
+                            result = execute_miner_command(sandbox_dir, command, runtime_image)
                                     
                             stdout = result.stdout.strip()
                             stderr = result.stderr.strip()
@@ -479,7 +474,7 @@ print("hello")
                         try:
                             abs_path = os.path.abspath(os.path.join(sandbox_dir, file_path))
                             # Security check: Prevent writing outside sandbox_dir via path traversal (e.g. ../../)
-                            if not abs_path.startswith(sandbox_dir):
+                            if not Path(abs_path).is_relative_to(Path(sandbox_dir)):
                                 raise Exception(f"Path traversal detected! Denied access to {abs_path}")
                                 
                             os.makedirs(os.path.dirname(abs_path) or '.', exist_ok=True)
@@ -521,19 +516,25 @@ print("hello")
     else:
         print(f"\033[93m[Multi-Agent Swarm]\033[0m Reached maximum cycles. Stopping.\n")
 
+    if not work_verified:
+        print("[Runtime] Task is not deliverable. No trajectory or reward submitted.\n")
+        return False
+
     # Reward for automode
     print("\033[93m[PoUW Validator]\033[0m Submitting Proof of Useful Work to P2P Network...")
     
     import uuid
     import shutil
-    global p2p_node
     
     t_id = task_id if task_id else "local_task"
     sandbox_dir = os.path.abspath(os.path.join("sandbox_workspace", t_id))
     zip_path = os.path.abspath(f"sandbox_workspace/{t_id}_completed.zip")
     
     print(f"[\033[96mP2P Node\033[0m] Zipping workspace to {zip_path}...")
-    shutil.make_archive(zip_path.replace('.zip', ''), 'zip', sandbox_dir)
+    import zipfile
+    with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in deliverable_files(sandbox_dir):
+            archive.write(Path(sandbox_dir) / name, name)
     
     cid = f"P2P_LOCAL_{uuid.uuid4().hex}"
     if 'p2p_node' in globals() and p2p_node:
@@ -556,7 +557,7 @@ print("hello")
     if not target_wallet:
         target_wallet = wallet.address
         
-    tx_hash = "Unknown"
+    network_status = "pending"
     try:
         from p2p.protocol import MessageType, create_message
         import asyncio
@@ -569,6 +570,7 @@ print("hello")
             "task_id": task_id,
             "wallet": target_wallet,
             "trajectory_log": cid,
+            "acceptance_hash": contract_hash(acceptance),
             "reward": reward,
             "status": "pending_validation"
         }
@@ -588,16 +590,21 @@ print("hello")
         print(f"Trajectory Hash: \033[96m{traj_hash[:16]}...\033[0m")
         print("Waiting for Smart Judges to validate your work...\n")
         
-        # Save local copy for /wallet history
-        ledger.add_pouw_reward(target_wallet, reward, proof)
+        # Credit only after network approval; failed/pending work is not earned balance.
         
         # Wait for validation result from P2P gossip (check signatures)
         print("\033[93m[System]\033[0m Waiting for validation signatures from P2P network...")
         try:
             start_wait = time.time()
             while time.time() - start_wait < 180:
+                if p2p_node.trajectories.get(traj_hash, {}).get("status") == "rejected":
+                    network_status = "rejected"
+                    print("[System] Network rejected this delivery. No reward credited.")
+                    break
                 sigs = p2p_node.signatures.get(traj_hash, [])
                 if len(sigs) >= 1:  # At least 1 judge validated
+                    ledger.add_pouw_reward(target_wallet, reward, proof)
+                    network_status = "validated (local reward credited)"
                     print("\033[92m[System]\033[0m Validation completed by the network!\n")
                     # Mark task as completed
                     if task_id and task_id in p2p_node.tasks:
@@ -607,14 +614,14 @@ print("hello")
                     break
                 time.sleep(3)
             else:
-                print("\033[93m[System]\033[0m Validation timeout (3 min). Continuing anyway.\n")
+                print("\033[93m[System]\033[0m Validation pending after 3 min. No reward credited yet.\n")
         except Exception:
             pass
             
     except Exception as e:
+        network_status = "submission_error"
         print(f"\033[91m[P2P Error]\033[0m Could not broadcast to P2P network: {e}")
-        print(f"Saving reward to Local Offline Wallet as fallback.\n")
-        ledger.add_pouw_reward(wallet.address, reward, proof)
+        print("No reward credited without network validation.\n")
         
         
     # Generate Audit Log File
@@ -622,7 +629,10 @@ print("hello")
     audit_filename = f"zyra_audit_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
     try:
         with open(audit_filename, 'w', encoding='utf-8') as f:
-            f.write(f"# ZYRA Swarm Audit Log\n\n**Task:** {initial_task}\n**Status:** {'Success' if tx_hash != 'Unknown' else 'Failed/No Reward'}\n**Transaction Hash:** {tx_hash}\n\n## Full Trajectory\n\n")
+            f.write(f"# ZYRA Swarm Audit Log\n\n**Task:** {initial_task}\n**Network status:** {network_status}\n"
+                    "**On-chain transaction:** Not submitted by this flow.\n\n## Local delivery verification\n\n")
+            import json
+            f.write("```json\n" + json.dumps(validation_report, indent=2) + "\n```\n\n## Full Trajectory\n\n")
             for entry in full_trajectory_log:
                 f.write(f"### {entry['role'].upper()}\n```\n{entry['content']}\n```\n\n")
         print(f"\033[92m[System]\033[0m Detailed audit log saved to \033[96m{audit_filename}\033[0m\n")
@@ -636,6 +646,7 @@ print("hello")
     for c in coder_history[1:]: # Skip system prompt
         history.append({"role": "assistant", "content": f"[Coder] {c['content']}"})
     history.append({"role": "user", "content": "--- END AUTOMODE ---"})
+    return True
 
 
 try:
@@ -654,6 +665,14 @@ try:
         print(f"Press \033[91mCtrl+C\033[0m to stop validating.\n")
         
         target_wallet = wallet.metamask_address if hasattr(wallet, 'metamask_address') and wallet.metamask_address else wallet.address
+
+        from ai.execution.runtime import ensure_runtime
+        from ai.execution.contract import contract_hash
+        try:
+            ensure_runtime()
+        except Exception as exc:
+            print(f"[Smart Judge] {exc}")
+            return
         
         # --- SYBIL RESISTANCE (STAKING CHECK) ---
         import os
@@ -702,7 +721,26 @@ try:
                     
                     # Evaluate locally
                     p_node = p2p_node if 'p2p_node' in globals() else None
-                    is_valid, reason = PoUWValidator.evaluate_trajectory_with_llm(task['trajectory_log'], model_name, p_node)
+                    original_task = p2p_node.tasks.get(task.get("task_id"))
+                    if original_task is None:
+                        validated_trajs.discard(traj_hash)
+                        print("[Smart Judge] Waiting for original task acceptance criteria from P2P sync.")
+                        time.sleep(5)
+                        continue
+                    acceptance = original_task.get("acceptance")
+                    try:
+                        expected_hash = contract_hash(acceptance)
+                        if original_task.get("acceptance_hash") != expected_hash or task.get("acceptance_hash") != expected_hash:
+                            raise ValueError("Submission does not match the original task acceptance hash")
+                        is_valid, reason = PoUWValidator.evaluate_trajectory_with_llm(
+                            task['trajectory_log'], model_name, p_node, acceptance=acceptance)
+                    except (ValueError, TypeError, AttributeError) as exc:
+                        is_valid, reason = False, {"status": "FAILED", "reason": str(exc), "retry": False}
+                    if isinstance(reason, dict) and reason.get("status") == "UNAVAILABLE":
+                        validated_trajs.discard(traj_hash)
+                        print(f"[Smart Judge] Validation deferred: {reason.get('reason')}")
+                        time.sleep(10)
+                        continue
                     
                     # Submit verdict via P2P
                     print(f"[\033[96mAI Validator Node\033[0m] Submitting Verdict to P2P Network...")
@@ -711,6 +749,10 @@ try:
                     import asyncio
                     
                     if is_valid:
+                        task["status"] = "validated"
+                        task["validation"] = reason
+                        asyncio.run_coroutine_threadsafe(p2p_node.broadcast(
+                            create_message(MessageType.TRAJECTORY_UPDATED, task)), p2p_node.loop)
                         sig = wallet.sign_message(traj_hash) if hasattr(wallet, 'sign_message') else f"SIG_{wallet.address}_{traj_hash}"
                         sig_payload = {
                             "trajectory_hash": traj_hash,
@@ -730,6 +772,7 @@ try:
                         task_id = task.get("task_id")
                         if task_id and task_id in p2p_node.tasks:
                             p2p_node.tasks[task_id]["status"] = "completed"
+                            p2p_node.tasks[task_id]["result_cid"] = task["trajectory_log"]
                             update_msg = create_message(MessageType.TASK_UPDATED, p2p_node.tasks[task_id])
                             asyncio.run_coroutine_threadsafe(p2p_node.broadcast(update_msg), p2p_node.loop)
                         
@@ -746,7 +789,8 @@ try:
                         # Reset the original task back to pending so another miner can work on it
                         task_id = task.get("task_id")
                         if task_id and task_id in p2p_node.tasks:
-                            p2p_node.tasks[task_id]["status"] = "pending"
+                            retry = isinstance(reason, dict) and reason.get("retry", False)
+                            p2p_node.tasks[task_id]["status"] = "pending" if retry else "failed"
                             
                             # Auto-Correction Feedback Loop: Append judge's reason to the task prompt!
                             old_prompt = p2p_node.tasks[task_id].get("prompt", "")
@@ -780,6 +824,10 @@ try:
                 ('/judge', 'Run as P2P Validator Node'),
                 ('/mine', 'Auto-Mining tugas dari ZYRA Network'),
                 ('/models', 'Buka pengelola model lokal Ollama'),
+                ('/engine', 'Install/start Ollama dan siapkan model AI lokal'),
+                ('/runtime', 'Siapkan Docker runtime miner/judge (Flask + Chromium)'),
+                ('/output', 'Lihat/atur folder hasil task (/output <folder>)'),
+                ('/tasks', 'Lihat status task client dan lokasi hasil tersimpan'),
                 ('/deploy', 'Auto-deploy Smart Contract ke Localhost'),
                 ('/logs', 'Lihat audit log dari tugas sebelumnya'),
                 ('/clear', 'Bersihkan layar terminal dan memori percakapan'),
@@ -829,6 +877,9 @@ def main():
     user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
     wallet = ZyraWallet(user_data_dir)
     ledger = ZyraLedger(user_data_dir)
+    from zyra_cmd.client_state import ClientState
+    from zyra_cmd.client_tasks import ClientTaskMonitor
+    client_state = ClientState(user_data_dir)
     
     print(f"Connected to Wallet: \033[96m{wallet.address}\033[0m")
     
@@ -841,8 +892,8 @@ def main():
     
     p2p_port = random.randint(5001, 5999)
     p2p_node = P2PNode(port=p2p_port, tracker_url=args.tracker, seed_peer=args.seed_peer)
-    
-    # P2P Node background event listeners can be added here if needed
+    p2p_node.on_task_updated = client_state.update_from_network
+    client_monitor = ClientTaskMonitor(client_state, p2p_node)
     
     def run_p2p():
         asyncio.run(p2p_node.start())
@@ -853,7 +904,7 @@ def main():
     from zyra_cmd.installer import check_and_install_ollama, check_and_pull_model
     
     # Auto-Install Ollama Engine if missing
-    has_ollama = check_and_install_ollama()
+    has_ollama = check_and_install_ollama(state=client_state)
     
     llm = None
     if has_ollama:
@@ -872,6 +923,9 @@ def main():
         
     if args.prompt:
         # Single-shot mode
+        if llm is None:
+            print("[Client] Local AI is unavailable. Run zyra and use /engine to set it up, or /submit to send a task.")
+            return
         process_prompt(llm, args.prompt, history, wallet, ledger, args.model)
     else:
         # Interactive REPL mode
@@ -900,6 +954,9 @@ def main():
         else:
             session = None
             print("\033[93m[System] Tip: Install prompt_toolkit for interactive autocomplete dropdowns!\033[0m\n")
+
+        client_monitor.show_tasks(startup=True)
+        client_monitor.start()
         
         while True:
             try:
@@ -913,6 +970,7 @@ def main():
                     
                 cmd = user_input.lower()
                 if cmd in ['/exit', '/quit', 'exit', 'quit']:
+                    client_monitor.stop()
                     print("\033[93mGoodbye! Keep mining ZYRA.\033[0m")
                     break
                 elif cmd == '/help':
@@ -927,6 +985,12 @@ def main():
                     print("  \033[93m/search\033[0m  - Live web search (e.g., /search latest news)")
                     print("  \033[93m/automode\033[0m- Autonomous Coding Agent (e.g., /automode create a react app)")
                     print("  \033[93m/submit\033[0m  - Submit task to ZYRA Mempool for Miners (e.g., /submit make a python script)")
+                    print("  \033[93m/engine\033[0m  - Install/start Ollama and set up a local model")
+                    print("  \033[93m/runtime\033[0m - Prepare the shared Docker runtime for mining/judging")
+                    print("  \033[93m/submit --web <task>\033[0m - Require a runnable web app and browser checks")
+                    print('  \033[93m/submit --spec "acceptance.json" <task>\033[0m - Use your own runtime checks')
+                    print("  \033[93m/output\033[0m  - Show result folder; /output <folder> sets it for future tasks")
+                    print("  \033[93m/tasks\033[0m   - Show saved client tasks, status, and result locations")
                     print("  \033[93m/export\033[0m  - Save current chat history to a Markdown file")
                     print("  \033[93m/logs\033[0m    - Open the most recent PoUW Swarm Audit Log")
                     print("  \033[93m/judge\033[0m   - Run as P2P Validator Node")
@@ -935,6 +999,39 @@ def main():
                     print("  \033[93m/stake\033[0m   - Stake ZYRA tokens to become a Validator (requires CELO gas)")
                     print("  \033[93m/update\033[0m  - Cek dan install update terbaru")
                     print("  \033[93mexit\033[0m     - Exit the CLI\n")
+                    continue
+                elif cmd == '/runtime':
+                    try:
+                        from ai.execution.runtime import ensure_runtime
+                        print(f"[Runtime] Ready: {ensure_runtime()}")
+                    except Exception as exc:
+                        print(f"[Runtime] {exc}")
+                    continue
+                elif cmd == '/engine':
+                    try:
+                        if check_and_install_ollama(state=client_state, force_prompt=True):
+                            final_model = check_and_pull_model(args.model)
+                            if final_model:
+                                args.model = final_model
+                            llm = LocalLLMGenerator(model_name=args.model)
+                            print(f"[Engine] Ollama siap. Model: {args.model}. Local AI dapat digunakan sekarang.\n")
+                    except Exception as e:
+                        print(f"[Engine] Setup belum berhasil: {e}. Coba lagi lewat /engine.\n")
+                    continue
+                elif cmd == '/output' or cmd.startswith('/output '):
+                    try:
+                        if cmd == '/output':
+                            print(f"[Client] Folder hasil: {client_state.get_output_dir()}\n"
+                                  'Gunakan /output "D:\\Hasil ZYRA" atau /output ~/hasil-zyra untuk mengubahnya.\n')
+                        else:
+                            path = client_state.set_output_dir(user_input.split(' ', 1)[1])
+                            print(f"[Client] Folder hasil disimpan: {path}\n"
+                                  "Berlaku untuk task baru; task sebelumnya tetap memakai folder saat disubmit.\n")
+                    except (OSError, ValueError) as e:
+                        print(f"[Client] Folder tidak dapat digunakan: {e}\n")
+                    continue
+                elif cmd == '/tasks':
+                    client_monitor.show_tasks()
                     continue
                 elif cmd == '/logs':
                     import glob
@@ -997,7 +1094,7 @@ os.system("start cmd /k zyra")
                         print(f"\033[91m[Error]\033[0m {e}\n")
                     continue
                 elif cmd == '/judge':
-                    run_validator_mode(wallet, llm.model_name)
+                    run_validator_mode(wallet, llm.model_name if llm else args.model)
                     continue
                 elif cmd in ['/wallet', '/balance']:
                     balance = ledger.get_balance(wallet.address)
@@ -1025,6 +1122,9 @@ os.system("start cmd /k zyra")
                     print("\033[92m[System]\033[0m Screen and conversation memory cleared.\n")
                     continue
                 elif user_input.startswith('/model '):
+                    if llm is None:
+                        print("[Engine] Use /engine to set up local AI first.\n")
+                        continue
                     new_model = user_input.split(' ', 1)[1].strip()
                     if new_model:
                         llm.model_name = new_model
@@ -1033,6 +1133,9 @@ os.system("start cmd /k zyra")
                         print(f"\033[93m[System]\033[0m Current model is: \033[96m{llm.model_name}\033[0m\n")
                     continue
                 elif cmd == '/model':
+                    if llm is None:
+                        print("[Engine] Use /engine to set up local AI first.\n")
+                        continue
                     print(f"\033[93m[System]\033[0m Current model is: \033[96m{llm.model_name}\033[0m")
                     try:
                         import urllib.request, json
@@ -1235,7 +1338,7 @@ os.system("start cmd /k zyra")
                     continue
                 elif user_input.startswith('/automode '):
                     if llm is None:
-                        print("\033[91m[Error]\033[0m Ollama is not installed. /automode requires a local LLM engine.\n")
+                        print("\033[91m[Error]\033[0m /automode requires local AI. Use /engine to install/start Ollama.\n")
                         continue
                     task = user_input.split(' ', 1)[1].strip()
                     auto_yes = False
@@ -1258,6 +1361,8 @@ os.system("start cmd /k zyra")
                         import uuid
                         import asyncio
                         from p2p.protocol import MessageType, create_message
+                        from ai.execution.contract import parse_submission, contract_hash
+                        task_prompt, acceptance = parse_submission(task_prompt)
                         
                         task_id = str(uuid.uuid4())
                         task_payload = {
@@ -1265,54 +1370,21 @@ os.system("start cmd /k zyra")
                             "prompt": task_prompt,
                             "reward": 2.5,
                             "status": "pending",
-                            "client": wallet.metamask_address or wallet.address
+                            "client": wallet.metamask_address or wallet.address,
+                            "acceptance": acceptance,
+                            "acceptance_hash": contract_hash(acceptance)
                         }
                         
-                        # Simpan di local mempool
-                        p2p_node.tasks[task_id] = task_payload
-                        
-                        # Broadcast ke jaringan P2P
-                        msg = create_message(MessageType.NEW_TASK, task_payload)
-                        asyncio.run_coroutine_threadsafe(p2p_node.broadcast(msg), p2p_node.loop)
+                        # Persist before broadcasting; keep local output paths off the network.
+                        saved_task = client_state.add_task(task_payload)
+                        p2p_node.add_task(task_payload)
                         
                         print(f"\033[92m[Success]\033[0m Tugas berhasil dilempar ke P2P Mempool!")
                         print(f"Task ID: \033[96m{task_id}\033[0m")
+                        print(f"Runtime profile: {acceptance['profile']} | entrypoint: {acceptance['entrypoint']}")
+                        print(f"Folder hasil: {saved_task['output_dir']}")
                         print("Sekarang tinggal tunggu para Miner di jaringan untuk mengerjakan tugas ini.\n")
-                        
-                        # Start background thread to poll for completion from P2P mempool
-                        def wait_for_task(tid):
-                            print(f"\033[93m[Client]\033[0m Menunggu hasil validasi dari jaringan P2P...")
-                            import time
-                            while True:
-                                task_info = p2p_node.tasks.get(tid, {})
-                                if task_info.get("status") == "completed":
-                                    cid = task_info.get("result_cid")
-                                    print(f"\n\033[92m[Client]\033[0m Tugas {tid} selesai! Mengunduh hasil (CID: {cid})...")
-                                    
-                                    dest_zip = os.path.join(os.getcwd(), f"zyra_result_{tid[:8]}.zip")
-                                    
-                                    # Use threadsafe coroutine to request file
-                                    future = asyncio.run_coroutine_threadsafe(
-                                        p2p_node.request_file(cid, dest_zip), 
-                                        p2p_node.loop
-                                    )
-                                    
-                                    try:
-                                        future.result(timeout=120)
-                                        print(f"\033[92m[Success]\033[0m File berhasil diunduh ke: {dest_zip}")
-                                        # Extract it
-                                        extract_dir = os.path.join(os.getcwd(), f"zyra_workspace_{tid[:8]}")
-                                        import zipfile
-                                        with zipfile.ZipFile(dest_zip, 'r') as zip_ref:
-                                            zip_ref.extractall(extract_dir)
-                                        print(f"\033[92m[Success]\033[0m Workspace diekstrak di: {extract_dir}\nZYRA > ", end="", flush=True)
-                                    except Exception as e:
-                                        print(f"\n\033[91m[Client Error]\033[0m Gagal mengunduh file via P2P: {e}\nZYRA > ", end="", flush=True)
-                                    
-                                    break
-                                time.sleep(2)
-                                
-                        threading.Thread(target=wait_for_task, args=(task_id,), daemon=True).start()
+                        print("Riwayat tersimpan. Setelah restart, ZYRA akan melanjutkan pemantauan. Cek /tasks.\n")
                     except Exception as e:
                         print(f"\033[91m[Error]\033[0m Gagal submit ke P2P: {e}\n")
                     continue
@@ -1398,7 +1470,7 @@ os.system("start cmd /k zyra")
                     continue
                 elif cmd == '/mine':
                     if llm is None:
-                        print("\033[91m[Error]\033[0m Ollama is not installed. /mine requires a local LLM engine.\n")
+                        print("\033[91m[Error]\033[0m /mine requires local AI. Use /engine to install/start Ollama.\n")
                         continue
                     print("\n\033[93m[Miner]\033[0m Starting ZYRA Auto-Miner...")
                     print("\033[96m[System]\033[0m Scanning P2P Mempool for new tasks (Press Ctrl+C to stop)...\n")
@@ -1430,23 +1502,44 @@ os.system("start cmd /k zyra")
                                 
                                 print(f"\n\033[92m[P2P Mempool]\033[0m Found Task! Reward: {reward} ZYRA")
                                 print(f"Task ID: \033[96m{task_id}\033[0m")
-                                run_automode(llm, prompt, history, wallet, ledger, llm.model_name, auto_yes=True, planner_model=args.planner_model, coder_model=args.coder_model, task_id=task_id)
-                                print("\n\033[96m[System]\033[0m Scanning P2P Mempool for next task...\n")
+                                delivered = run_automode(llm, prompt, history, wallet, ledger, llm.model_name, auto_yes=True, planner_model=args.planner_model, coder_model=args.coder_model, task_id=task_id)
+                                # After delivery attempt, check what validator decided
+                            task_status = p2p_node.tasks.get(task_id, {}).get("status")
+                            task_prompt = p2p_node.tasks.get(task_id, {}).get("prompt", "")
+                            
+                            if task_status == "completed":
+                                print(f"\033[92m[Miner]\033[0m Task {task_id} validated successfully! Reward credited.\n")
+                            elif task_status == "pending" and "[SYSTEM NOTE" in task_prompt:
+                                # Validator rejected with feedback - retry same task with feedback
+                                feedback_start = task_prompt.find("[SYSTEM NOTE")
+                                feedback = task_prompt[feedback_start:].strip()
+                                print(f"\033[93m[Miner]\033[0m Task {task_id} rejected. Feedback: {feedback[:200]}...\n")
+                                print(f"\033[96m[Miner]\033[0m Retrying same task with validator feedback...\n")
+                                # Don't advance - loop will re-pick this same task (still pending)
+                                continue
+                            elif task_status == "failed":
+                                print(f"\033[91m[Miner]\033[0m Task {task_id} permanently failed (no retry). Moving on.\n")
                             else:
-                                time.sleep(5) # No pending tasks, wait 5 seconds
+                                print(f"\033[93m[Miner]\033[0m Task {task_id} status: {task_status}. Moving on.\n")
+                            
+                            print("\n\033[96m[System]\033[0m Scanning P2P Mempool for next task...\n")
+                            time.sleep(2)
+                        else:
+                            time.sleep(5) # No pending tasks, wait 5 seconds
                     except KeyboardInterrupt:
                         print("\n\033[93m[Miner]\033[0m Auto-Miner stopped.\033[0m\n")
                     continue
                 
                 # If not a slash command, process as AI prompt
                 if llm is None:
-                    print("\033[91m[Error]\033[0m Ollama is not installed. You can only use Client commands (e.g. /submit). To use Local AI, restart and install Ollama.\n")
+                    print("\033[91m[Error]\033[0m Use /submit for network tasks, or /engine to set up local AI.\n")
                     continue
                 process_prompt(llm, user_input, history, wallet, ledger, llm.model_name)
                 
             except KeyboardInterrupt:
                 print("\n\033[93mInterrupted. Type 'exit' to quit.\033[0m")
             except EOFError:
+                client_monitor.stop()
                 break
 
 if __name__ == "__main__":

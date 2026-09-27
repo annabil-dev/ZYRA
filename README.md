@@ -1,38 +1,68 @@
-# MY-AI
+# 🚀 ZYRA CLI: Decentralized AI Agent & PoUW Network
 
-A locally built, trained, and executed Artificial Intelligence desktop application for Windows.
+A powerful, self-organizing decentralized AI network client and terminal-based Agentic AI framework powered by Proof-of-Useful-Work (PoUW).
 
-## Tujuan Project
-Proyek ini dibuat untuk membangun neural network Transformer dan seluruh sistem pendukung AI dari awal tanpa bergantung pada layanan cloud, API eksternal, atau model pre-trained yang sudah ada (seperti OpenAI, Claude, Llama, dll). 
-Tujuan akhirnya adalah memiliki AI Assistant pribadi yang berjalan sepenuhnya lokal di komputer pengguna.
+## 🌟 Core Ecosystem
+- **ZYRA CLI (`zyra_cmd/zyra_cli.py`):** Interactive terminal assistant with autonomous tool-calling, multi-model support, and P2P networking.
+- **P2P Gossip Network (`p2p/`):** Decentralized node communication for task broadcasting and consensus.
+- **Proof-of-Useful-Work (PoUW):** Consensus mechanism where AI Miner nodes execute tasks and Smart Judges validate trajectories deterministically.
+- **Blockchain Integration (`blockchain/` & `mythchain/`):** EVM tokenomics (Celo/Hardhat) and sovereign Cosmos SDK L1 roadmap (MythChain).
+- **AI Research (`ai/`):** Scratch-built Transformer architecture and training framework.
 
-## Requirements
-- Windows 64-bit
-- Python 3.10+
-- Hardware minimal: CPU + RAM (Rekomendasi: NVIDIA GPU dengan CUDA support)
+## 📦 Installation & Setup
 
-## Setup Virtual Environment
 ```powershell
 python -m venv venv
 .\venv\Scripts\activate
+pip install -e .
 ```
 
-## Install Dependencies
-Project ini menggunakan `pyproject.toml` untuk manajemen dependensi minimal.
-```powershell
-pip install -e .[dev]
-```
-Dependensi utama:
-- PySide6 (Desktop GUI)
-- PyYAML (Configuration)
-- PyTorch (Hardware detection, Tensor/Autograd)
+## 🚀 Running ZYRA CLI
 
-## Menjalankan Aplikasi
 ```powershell
-python run.py
+zyra
+```
+OR
+```powershell
+python -m zyra_cmd.zyra_cli
 ```
 
-## Menjalankan Test
-```powershell
-pytest tests/
+## Client Mode: Engine, Tasks & Result Folder
+
+Client nodes can submit tasks without installing Ollama. The first Ollama installation
+answer is remembered across CLI restarts. If you choose `n`, subsequent launches do
+not repeat the installation prompt. To install/start Ollama and select a local model later:
+
+```text
+/engine
 ```
+
+Set the destination for future task results before submitting:
+
+```text
+/output "D:\Hasil ZYRA"
+/submit Buat aplikasi kalkulator Python
+/tasks
+```
+
+On Linux/macOS, for example, use `/output ~/hasil-zyra`. Paths with spaces are supported.
+`/output` with no argument shows the current folder. The default is `~/ZYRA Results`.
+Each task remembers its absolute destination at submission time; changing `/output`
+does not move previous or in-progress tasks.
+
+Task IDs, progress, download status, and result locations are saved in `client.db`
+under `%APPDATA%\ZYRA AI` on Windows, or `~/ZYRA AI` when `APPDATA` is unset.
+When the CLI is reopened:
+
+- A summary shows previously downloaded results and their workspace/ZIP paths.
+- Pending tasks resume tracking through P2P mempool synchronization.
+- Tasks completed while the client was offline are downloaded once their completion
+  and result CID are received from peers.
+- Failed downloads are retried while the CLI is running. Successfully saved results
+  are not downloaded again, and existing result folders are not overwritten.
+- `/tasks` shows the full local task history, destinations, and latest download errors.
+
+Recovery requires a peer that still knows the task and an online node serving its
+workspace. Closing the client stops local monitoring/downloads until it is reopened.
+Tracking applies to tasks submitted with this version; older sessions that never
+saved task history cannot be reconstructed from local history automatically.
