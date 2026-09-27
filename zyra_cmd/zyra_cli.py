@@ -8,11 +8,16 @@ import re
 import requests
 from pathlib import Path
 
-# Fix Windows console encoding for Emojis
+# Fix Windows console encoding & ANSI colors
 if sys.platform == 'win32':
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except AttributeError:
+        pass
+    try:
+        import colorama
+        colorama.just_fix_windows_console()
+    except ImportError:
         pass
 
 # Add project root to sys.path
