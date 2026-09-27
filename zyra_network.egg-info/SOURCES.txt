@@ -50,6 +50,7 @@ ai/training/metrics.py
 ai/training/reproducibility.py
 ai/training/scheduler.py
 ai/training/trainer.py
+p2p/content.py
 p2p/network.py
 p2p/protocol.py
 p2p/votes.py
@@ -62,6 +63,7 @@ tests/test_checkpoint.py
 tests/test_cli_engine.py
 tests/test_client_task_recovery.py
 tests/test_config.py
+tests/test_content_addressed_artifacts.py
 tests/test_database.py
 tests/test_dataset_builder.py
 tests/test_dataset_reader.py
@@ -70,6 +72,7 @@ tests/test_delivery_runtime.py
 tests/test_device_fallback.py
 tests/test_gradient_update.py
 tests/test_hardware.py
+tests/test_miner_wallet_migration.py
 tests/test_model_identity.py
 tests/test_overfit_tiny_dataset.py
 tests/test_paths.py

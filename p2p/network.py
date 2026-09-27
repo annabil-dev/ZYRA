@@ -10,8 +10,10 @@ import socket
 
 from p2p.protocol import MessageType, create_message, parse_message
 from p2p.votes import QUORUM, tally, verify_vote
+from p2p.content import content_cid, is_sha256_cid, verify_content_cid
 
 logging.basicConfig(filename='zyra_p2p.log', level=logging.INFO, format='%(asctime)s - [P2P] %(message)s')
+MAX_FILE_BYTES = 256 * 1024 * 1024
 
 class P2PNode:
     def __init__(self, host='0.0.0.0', port=5001, tracker_url='http://localhost:5000', seed_peer=None):
@@ -87,7 +89,8 @@ class P2PNode:
                 self.relay_ws = await websockets.connect(relay_uri)
                 self.peers.add(self.relay_ws)
                 logging.info(f"Connected to Bridge WebSocket Relay at {relay_uri}")
-                print(f"[\033[92mP2P\033[0m] Connected to Bridge Relay ({relay_uri})")
+                # Keep this background-thread log plain for terminals that don't render ANSI.
+                print(f"[P2P] Connected to Bridge Relay ({relay_uri})")
                 
                 # Sync mempool: ask for theirs, push ours
                 await self.relay_ws.send(create_message(MessageType.SYNC_MEMPOOL))
@@ -345,18 +348,43 @@ class P2PNode:
                     try:
                         with open(dl["path"], 'wb') as f:
                             for i in sorted(dl["chunks"].keys()):
-                                f.write(base64.b64decode(dl["chunks"][i]))
+                                f.write(dl["chunks"][i])
+                        verify_content_cid(dl["path"], cid)
                         print(f"[\033[92mSUCCESS\033[0m] File {cid} assembled successfully.")
                         if cid in self.file_transfer_callbacks:
                             if not self.file_transfer_callbacks[cid].done():
                                 self.file_transfer_callbacks[cid].set_result(True)
                     except Exception as e:
+                        try:
+                            os.remove(dl["path"])
+                        except OSError:
+                            pass
                         print(f"[\033[91mERROR\033[0m] Failed to assemble file {cid}: {e}")
                         future = self.file_transfer_callbacks.get(cid)
                         if future is not None and not future.done():
                             future.set_exception(e)
                 else:
-                    dl["chunks"][chunk_index] = data
+                    import base64
+                    if not isinstance(chunk_index, int) or chunk_index < 0 or not isinstance(data, str):
+                        future = self.file_transfer_callbacks.get(cid)
+                        if future is not None and not future.done():
+                            future.set_exception(ValueError("Invalid P2P file chunk"))
+                    else:
+                        try:
+                            decoded = base64.b64decode(data, validate=True)
+                            if len(decoded) > 65536:
+                                raise ValueError("P2P file chunk exceeds the 64 KiB limit")
+                            chunks = dl["chunks"]
+                            previous = chunks.get(chunk_index)
+                            current_size = dl.get("size", 0) - (len(previous) if previous else 0)
+                            if current_size + len(decoded) > MAX_FILE_BYTES:
+                                raise ValueError("P2P artefact exceeds the 256 MiB limit")
+                            chunks[chunk_index] = decoded
+                            dl["size"] = current_size + len(decoded)
+                        except (ValueError, base64.binascii.Error) as e:
+                            future = self.file_transfer_callbacks.get(cid)
+                            if future is not None and not future.done():
+                                future.set_exception(e)
             else:
                 # Act as Relay and forward the chunk
                 await self.broadcast(raw_msg_str, exclude=websocket)
@@ -386,11 +414,14 @@ class P2PNode:
 
     def seed_file(self, cid, filepath):
         """Register a file to be seeded by this node."""
+        if os.path.getsize(filepath) > MAX_FILE_BYTES:
+            raise ValueError("P2P artefact exceeds the 256 MiB limit")
+        if is_sha256_cid(cid):
+            verify_content_cid(filepath, cid)
         self.hosted_files[cid] = filepath
         logging.info(f"Seeding file {cid} from {filepath}")
         
         # Broadcast FILE_OFFER
-        import os
         total_chunks = (os.path.getsize(filepath) // 65536) + 1
         msg = create_message(MessageType.FILE_OFFER, {"cid": cid, "total_chunks": total_chunks})
         self._run_coroutine(self.broadcast(msg))
@@ -400,7 +431,7 @@ class P2PNode:
 #         print(f"[\033[93mDEBUG P2P\033[0m] request_file called for {cid}")
         if cid in self.downloading_files:
             raise RuntimeError(f"A download for {cid} is already in progress")
-        self.downloading_files[cid] = {"chunks": {}, "path": dest_path}
+        self.downloading_files[cid] = {"chunks": {}, "path": dest_path, "size": 0}
         future = self.loop.create_future()
         self.file_transfer_callbacks[cid] = future
         
@@ -419,6 +450,12 @@ class P2PNode:
         """Read local file and send chunks directly over websocket."""
         filepath = self.hosted_files.get(cid)
         if not filepath: return
+        if is_sha256_cid(cid):
+            try:
+                verify_content_cid(filepath, cid)
+            except ValueError as exc:
+                logging.error("Refusing to serve mutated artefact %s: %s", cid, exc)
+                return
         
         print(f"[\033[96mP2P Node\033[0m] Sending file chunks for {cid} to Relay...")
         try:

@@ -1,0 +1,54 @@
+import hashlib
+import json
+
+import ecdsa
+
+from ai.blockchain.wallet import ZyraWallet
+from p2p.votes import judge_address, sign_vote, verify_vote
+from zyra_cmd.zyra_cli import get_pending_miner_task
+
+
+def test_legacy_simulated_wallet_gets_signing_key_without_changing_legacy_address(tmp_path):
+    wallet_dir = tmp_path / "legacy-wallet"
+    wallet_dir.mkdir()
+    private_key = hashlib.sha256(b"old simulated private key").hexdigest()
+    public_key = hashlib.sha256(private_key.encode()).hexdigest()
+    legacy_address = "Z" + hashlib.new("ripemd160", public_key.encode()).hexdigest()
+    wallet_file = wallet_dir / "wallet.json"
+    wallet_file.write_text(json.dumps({
+        "private_key": private_key,
+        "public_key": public_key,
+        "address": legacy_address,
+        "metamask_address": "0x" + "12" * 20,
+    }))
+
+    wallet = ZyraWallet(str(wallet_dir))
+    assert wallet.address == legacy_address
+    assert wallet.metamask_address == "0x" + "12" * 20
+    assert judge_address(wallet.signing_public_key) == wallet.signing_address
+    assert wallet.signing_address != legacy_address
+    stored = json.loads(wallet_file.read_text())
+    assert stored["address"] == legacy_address
+    assert stored["signing_address"] == wallet.signing_address
+    assert ecdsa.SigningKey.from_string(bytes.fromhex(stored["signing_private_key"]),
+                                        curve=ecdsa.SECP256k1)
+
+    miner = ZyraWallet(str(tmp_path / "miner-wallet"))
+    trajectory = {"task_id": "old-task", "trajectory_hash": "trajectory",
+                  "trajectory_log": "sha256:" + "a" * 64, "acceptance_hash": "contract",
+                  "miner_identity": miner.signing_address, "miner_public_key": miner.signing_public_key}
+    task = {"task_id": "old-task", "acceptance_hash": "contract"}
+    vote = sign_vote(wallet, trajectory, "PASS")
+    assert verify_vote(vote, trajectory, task)
+
+
+def test_miner_task_picker_handles_empty_queue_and_feedback_priority():
+    assert get_pending_miner_task({}) is None
+    tasks = {
+        "other": {"task_id": "other", "status": "pending"},
+        "retry": {"task_id": "retry", "status": "pending", "feedback": ["fix error"]},
+    }
+    assert get_pending_miner_task(tasks) == ("other", tasks["other"])
+    assert get_pending_miner_task(tasks, "retry") == ("retry", tasks["retry"])
+    tasks["retry"]["status"] = "mining"
+    assert get_pending_miner_task(tasks, "retry") == ("other", tasks["other"])

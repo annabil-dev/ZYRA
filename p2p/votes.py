@@ -28,9 +28,11 @@ def vote_bytes(vote):
 
 def sign_vote(wallet, trajectory, verdict, reason=""):
     vote = {field: trajectory[field] for field in ("task_id", "trajectory_hash", "trajectory_log", "acceptance_hash")}
-    vote.update(verdict=verdict, reason=str(reason)[:2000], public_key=wallet.public_key)
-    vote["judge_wallet"] = judge_address(wallet.public_key)
-    key = ecdsa.SigningKey.from_string(bytes.fromhex(wallet.private_key), curve=ecdsa.SECP256k1)
+    public_key = getattr(wallet, "signing_public_key", None) or wallet.public_key
+    private_key = getattr(wallet, "signing_private_key", None) or wallet.private_key
+    vote.update(verdict=verdict, reason=str(reason)[:2000], public_key=public_key)
+    vote["judge_wallet"] = judge_address(public_key)
+    key = ecdsa.SigningKey.from_string(bytes.fromhex(private_key), curve=ecdsa.SECP256k1)
     vote["signature"] = key.sign_deterministic(vote_bytes(vote), hashfunc=hashlib.sha256).hex()
     return vote
 

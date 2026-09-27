@@ -19,6 +19,11 @@ class ZyraWallet:
         self.public_key = None
         self.address = None
         self.metamask_address = None
+        # Signing identity is separate so a legacy simulated wallet keeps its
+        # original ZYRA address and local ledger history during migration.
+        self.signing_private_key = None
+        self.signing_public_key = None
+        self.signing_address = None
         self.load_or_create_wallet()
 
     def _generate_simulated_keys(self):
@@ -48,6 +53,12 @@ class ZyraWallet:
                 self.public_key = data.get('public_key')
                 self.address = data.get('address')
                 self.metamask_address = data.get('metamask_address')
+                self.signing_private_key = data.get('signing_private_key')
+                self.signing_public_key = data.get('signing_public_key')
+                self.signing_address = data.get('signing_address')
+                if HAS_ECDSA and not self._has_valid_signing_identity():
+                    self._generate_signing_identity()
+                    self.save()
         else:
             if HAS_ECDSA:
                 self._generate_ecdsa_keys()
@@ -55,8 +66,28 @@ class ZyraWallet:
                 self._generate_simulated_keys()
                 
             self.metamask_address = None
-                
+            if HAS_ECDSA:
+                self.signing_private_key = self.private_key
+                self.signing_public_key = self.public_key
+                self.signing_address = self.address
             self.save()
+
+    def _has_valid_signing_identity(self):
+        if not self.signing_private_key or not self.signing_public_key:
+            return False
+        try:
+            key = ecdsa.SigningKey.from_string(bytes.fromhex(self.signing_private_key), curve=ecdsa.SECP256k1)
+            public_key = key.get_verifying_key().to_string().hex()
+            expected_address = "Z" + hashlib.sha256(public_key.encode()).hexdigest()[:40]
+            return public_key == self.signing_public_key and expected_address == self.signing_address
+        except (ValueError, TypeError):
+            return False
+
+    def _generate_signing_identity(self):
+        key = ecdsa.SigningKey.generate(curve=ecdsa.SECP256k1)
+        self.signing_private_key = key.to_string().hex()
+        self.signing_public_key = key.get_verifying_key().to_string().hex()
+        self.signing_address = "Z" + hashlib.sha256(self.signing_public_key.encode()).hexdigest()[:40]
 
     def save(self):
         os.makedirs(os.path.dirname(self.wallet_file), exist_ok=True)
@@ -65,7 +96,10 @@ class ZyraWallet:
                 "private_key": self.private_key,
                 "public_key": self.public_key,
                 "address": self.address,
-                "metamask_address": self.metamask_address
+                "metamask_address": self.metamask_address,
+                "signing_private_key": self.signing_private_key,
+                "signing_public_key": self.signing_public_key,
+                "signing_address": self.signing_address
             }, f, indent=4)
 
     def sign_transaction(self, tx_data: str) -> str:

@@ -47,6 +47,18 @@ dotenv.load_dotenv(str(Path(__file__).resolve().parent.parent / '.env'))
 
 BRIDGE_URL = os.environ.get("ZYRA_BRIDGE_URL", "https://zyra-ai.tail3b049d.ts.net") # Hardcoded Global Bootstrap Node (Mythchain Alpha Tracker)
 
+
+def get_pending_miner_task(tasks, preferred_task_id=None):
+    """Return (task_id, task) or None; empty mempools are a normal state."""
+    if preferred_task_id:
+        preferred = tasks.get(preferred_task_id)
+        if preferred and preferred.get("status") == "pending":
+            return preferred_task_id, preferred
+    for task_id, task in list(tasks.items()):
+        if task.get("status") == "pending":
+            return task_id, task
+    return None
+
 def print_animated(text):
     for char in text:
         sys.stdout.write(char)
@@ -438,7 +450,7 @@ print("hello")
                             if stdout: output_msg += f"STDOUT:\n{stdout}\n"
                             if stderr: output_msg += f"STDERR:\n{stderr}\n"
                             if not stdout and not stderr: output_msg = "Command executed successfully with no output."
-                            
+
                             if result.returncode != 0:
                                 err_preview = stderr.replace('\n', ' ')
                                 err_preview = err_preview if len(err_preview) < 80 else err_preview[:80] + "..."
@@ -541,7 +553,8 @@ print("hello")
         for name in deliverable_files(sandbox_dir):
             archive.write(Path(sandbox_dir) / name, name)
     
-    cid = f"P2P_LOCAL_{uuid.uuid4().hex}"
+    from p2p.content import content_cid
+    cid = content_cid(zip_path)
     if 'p2p_node' in globals() and p2p_node:
         if len(p2p_node.peers) == 0:
             print("[\033[91mWARNING\033[0m] MINER IS NOT CONNECTED TO ANY P2P RELAY (0 peers)! Check Firewall Port 5050!")
@@ -578,8 +591,8 @@ print("hello")
             "acceptance_hash": contract_hash(acceptance),
             "reward": reward,
             "status": "pending_validation",
-            "miner_identity": wallet.address,
-            "miner_public_key": wallet.public_key
+            "miner_identity": wallet.signing_address or wallet.address,
+            "miner_public_key": wallet.signing_public_key or wallet.public_key
         }
         p2p_node.trajectories[traj_hash] = traj_payload
         traj_msg = create_message(MessageType.NEW_TRAJECTORY, traj_payload)
@@ -686,8 +699,8 @@ try:
         from ai.execution.contract import contract_hash
         from p2p.votes import judge_address
         try:
-            if judge_address(wallet.public_key) != wallet.address:
-                raise ValueError("Local ZYRA wallet address does not match its public key")
+            if judge_address(wallet.signing_public_key or wallet.public_key) != (wallet.signing_address or wallet.address):
+                raise ValueError("Local signing identity does not match its public key")
             ensure_runtime()
         except Exception as exc:
             print(f"[Smart Judge] {exc}. A real ECDSA wallet is required for judge votes.")
@@ -726,7 +739,7 @@ try:
                 for traj_hash, traj_data in list(p2p_node.trajectories.items()):
                     if traj_hash not in validated_trajs and traj_data.get("status") == "pending_validation":
                         # Don't judge your own work
-                        if traj_data.get("miner_identity") != wallet.address and traj_data.get("wallet") != target_wallet:
+                        if traj_data.get("miner_identity") != (wallet.signing_address or wallet.address) and traj_data.get("wallet") != target_wallet:
                             found_traj = (traj_hash, traj_data)
                             break
                 
@@ -1460,37 +1473,27 @@ os.system("start cmd /k zyra")
                         import asyncio
                         preferred_task_id = None
                         while True:
-                            # Scan local P2P mempool for pending tasks
-                            found_task = None
-                            if preferred_task_id:
-                                candidate = p2p_node.tasks.get(preferred_task_id)
-                                if candidate and candidate.get("status") == "pending":
-                                    found_task = candidate
-                                preferred_task_id = None
-                            for tid, tdata in list(p2p_node.tasks.items()):
-                                if found_task:
-                                    break
-                                if tdata.get("status") == "pending":
-                                    found_task = tdata
-                                    break
+                            claimed = get_pending_miner_task(p2p_node.tasks, preferred_task_id)
+                            preferred_task_id = None
+                            if claimed is None:
+                                time.sleep(5)
+                                continue
+
+                            task_id, found_task = claimed
+                            prompt = found_task.get("prompt")
+                            reward = found_task.get("reward", 2.5)
                             
-                            if found_task:
-                                task_id = found_task.get("task_id")
-                                prompt = found_task.get("prompt")
-                                reward = found_task.get("reward", 2.5)
-                                
-                                # Claim the task by updating status in P2P
-                                p2p_node.tasks[task_id]["status"] = "mining"
-                                p2p_node.tasks[task_id]["miner"] = target_wallet
-                                update_msg = create_message(MessageType.TASK_UPDATED, p2p_node.tasks[task_id])
-                                asyncio.run_coroutine_threadsafe(p2p_node.broadcast(update_msg), p2p_node.loop)
-                                
-                                print(f"\n\033[92m[P2P Mempool]\033[0m Found Task! Reward: {reward} ZYRA")
-                                print(f"Task ID: \033[96m{task_id}\033[0m")
-                                delivered = run_automode(llm, prompt, history, wallet, ledger, llm.model_name, auto_yes=True, planner_model=args.planner_model, coder_model=args.coder_model, task_id=task_id)
-                                # After delivery attempt, check what validator decided
+                            # Claim the task locally before announcing the attempt.
+                            p2p_node.tasks[task_id]["status"] = "mining"
+                            p2p_node.tasks[task_id]["miner"] = target_wallet
+                            update_msg = create_message(MessageType.TASK_UPDATED, p2p_node.tasks[task_id])
+                            asyncio.run_coroutine_threadsafe(p2p_node.broadcast(update_msg), p2p_node.loop)
+
+                            print(f"\n\033[92m[P2P Mempool]\033[0m Found Task! Reward: {reward} ZYRA")
+                            print(f"Task ID: \033[96m{task_id}\033[0m")
+                            delivered = run_automode(llm, prompt, history, wallet, ledger, llm.model_name, auto_yes=True, planner_model=args.planner_model, coder_model=args.coder_model, task_id=task_id)
+                            # After delivery attempt, check what validator decided
                             task_status = p2p_node.tasks.get(task_id, {}).get("status")
-                            task_prompt = p2p_node.tasks.get(task_id, {}).get("prompt", "")
                             
                             if task_status == "completed":
                                 print(f"\033[92m[Miner]\033[0m Task {task_id} validated successfully! Reward credited.\n")
@@ -1508,8 +1511,6 @@ os.system("start cmd /k zyra")
                             
                             print("\n\033[96m[System]\033[0m Scanning P2P Mempool for next task...\n")
                             time.sleep(2)
-                        else:
-                            time.sleep(5) # No pending tasks, wait 5 seconds
                     except KeyboardInterrupt:
                         print("\n\033[93m[Miner]\033[0m Auto-Miner stopped.\033[0m\n")
                     continue
