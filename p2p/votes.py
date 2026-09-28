@@ -17,9 +17,11 @@ def judge_address(public_key):
 
 
 def vote_bytes(vote):
-    fields = ("task_id", "trajectory_hash", "trajectory_log", "acceptance_hash", "verdict", "reason")
-    if not isinstance(vote, dict) or any(not isinstance(vote.get(field), str) or not vote[field] for field in fields[:5]):
+    fields = ("task_id", "trajectory_hash", "trajectory_log", "acceptance_hash", "attempt_id", "verdict", "reason")
+    if not isinstance(vote, dict) or any(not isinstance(vote.get(field), str) or not vote[field] for field in fields[:4]):
         raise ValueError("Incomplete vote")
+    if not isinstance(vote.get("attempt_id", ""), str):
+        raise ValueError("Invalid attempt ID")
     if vote["verdict"] not in ("PASS", "FAIL") or not isinstance(vote["reason"], str) or len(vote["reason"]) > 2000:
         raise ValueError("Invalid verdict or reason")
     return json.dumps({"domain": DOMAIN, **{field: vote[field] for field in fields}},
@@ -28,6 +30,7 @@ def vote_bytes(vote):
 
 def sign_vote(wallet, trajectory, verdict, reason=""):
     vote = {field: trajectory[field] for field in ("task_id", "trajectory_hash", "trajectory_log", "acceptance_hash")}
+    vote["attempt_id"] = trajectory.get("attempt_id", "")
     public_key = getattr(wallet, "signing_public_key", None) or wallet.public_key
     private_key = getattr(wallet, "signing_private_key", None) or wallet.private_key
     vote.update(verdict=verdict, reason=str(reason)[:2000], public_key=public_key)
@@ -45,8 +48,15 @@ def verify_vote(vote, trajectory, task):
             return False
         if task.get("trajectory_hash") and task["trajectory_hash"] != trajectory.get("trajectory_hash"):
             return False
+        if task.get("attempt_id") and task["attempt_id"] != trajectory.get("attempt_id"):
+            return False
+        if trajectory.get("attempt_id") and (
+                not task.get("lease") or task["lease"].get("lease_id") != trajectory["attempt_id"]):
+            return False
         if any(vote.get(field) != trajectory.get(field) for field in
                ("task_id", "trajectory_hash", "trajectory_log", "acceptance_hash")):
+            return False
+        if vote.get("attempt_id", "") != trajectory.get("attempt_id", ""):
             return False
         if vote.get("judge_wallet") != judge_address(vote.get("public_key")):
             return False

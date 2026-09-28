@@ -81,13 +81,23 @@ Run two independent judge nodes for end-to-end testing. Judges need a wallet
 created with `ecdsa` installed; older simulated wallets without a real 128-hex
 public key cannot submit a signed vote. This is a prototype vote quorum:
 judge selection and Sybil resistance are not implemented, and local SQLite
-balances are not final on-chain settlement. New ZIP content addressing is being
-added locally; previously published v2.1.52 still uses opaque ZIP IDs.
+balances are not final on-chain settlement. ZIP content addressing was added in
+v2.1.53; opaque IDs remain supported for older tasks.
 
-## P2P Artifact Integrity (local changes after v2.1.52)
+## P2P Artifact Integrity (v2.1.53)
 
 New automode workspace ZIP files use `sha256:<hex digest>` content IDs. Nodes
 verify the seeded file and verify the complete reconstructed download against
 that digest before making it available to the judge or client. Invalid chunks,
 oversized chunks, and artifacts larger than 256 MiB are rejected. Legacy opaque
 IDs remain readable for compatibility but carry no content-integrity guarantee.
+
+## Signed Task Leases (local changes after v2.1.53)
+
+Miners now publish a signed 30-minute lease for a task. Peers that see competing
+claims choose the same lease ID deterministically; stale leases expire back to a
+retryable task, and the lease/attempt ID is bound to the submitted trajectory and
+judge votes. This reduces duplicate mining and recovers tasks after a miner stops.
+It is a best-effort P2P lease, not a globally atomic lock: partitions or delayed
+claims can still cause duplicate work. Chain-level consensus is required for a
+single globally final task owner.

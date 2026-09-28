@@ -52,3 +52,21 @@ def test_miner_task_picker_handles_empty_queue_and_feedback_priority():
     assert get_pending_miner_task(tasks, "retry") == ("retry", tasks["retry"])
     tasks["retry"]["status"] = "mining"
     assert get_pending_miner_task(tasks, "retry") == ("other", tasks["other"])
+
+
+def test_miner_task_picker_respects_live_lease_and_recovers_expired_lease(tmp_path):
+    import time
+    from p2p.leases import create_lease, LEASE_SECONDS
+
+    owner = ZyraWallet(str(tmp_path / "lease-owner"))
+    other = ZyraWallet(str(tmp_path / "lease-other"))
+    task = {"task_id": "lease-task", "status": "pending", "acceptance_hash": "contract"}
+    lease = create_lease(owner, task)
+    task.update(status="mining", lease=lease, attempt_id=lease["lease_id"])
+    tasks = {"lease-task": task}
+
+    assert get_pending_miner_task(tasks, miner_identity=owner.signing_address) == ("lease-task", task)
+    assert get_pending_miner_task(tasks, miner_identity=other.signing_address) is None
+    expired_at = lease["expires_at"] + 1
+    assert get_pending_miner_task(tasks, miner_identity=other.signing_address, now=expired_at) == ("lease-task", task)
+    assert time.time() < expired_at

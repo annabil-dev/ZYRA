@@ -11,6 +11,7 @@ import socket
 from p2p.protocol import MessageType, create_message, parse_message
 from p2p.votes import QUORUM, tally, verify_vote
 from p2p.content import content_cid, is_sha256_cid, verify_content_cid
+from p2p.leases import CLAIM_SETTLE_SECONDS, create_lease, lease_order, verify_lease
 
 logging.basicConfig(filename='zyra_p2p.log', level=logging.INFO, format='%(asctime)s - [P2P] %(message)s')
 MAX_FILE_BYTES = 256 * 1024 * 1024
@@ -34,6 +35,7 @@ class P2PNode:
         self.trajectories = {} # trajectory_hash -> trajectory_data
         self.signatures = {} # trajectory_hash -> {judge_wallet: signed vote}
         self._finalized_trajectories = set()
+        self.task_claims = {} # task_id -> {lease_id: signed lease}
         
         # Keep track of seen message IDs to prevent infinite gossip loops
         self.seen_messages = set()
@@ -97,7 +99,8 @@ class P2PNode:
                 sync_data = {
                     "tasks": self.tasks,
                     "trajectories": self.trajectories,
-                    "signatures": self.signatures
+                    "signatures": self.signatures,
+                    "task_claims": self.task_claims
                 }
                 await self.relay_ws.send(create_message(MessageType.MEMPOOL_DATA, sync_data))
                 
@@ -167,7 +170,8 @@ class P2PNode:
             sync_data = {
                 "tasks": self.tasks,
                 "trajectories": self.trajectories,
-                "signatures": self.signatures
+                "signatures": self.signatures,
+                "task_claims": self.task_claims
             }
             await websocket.send(create_message(MessageType.MEMPOOL_DATA, sync_data))
             
@@ -237,6 +241,15 @@ class P2PNode:
             if existing.get("acceptance_hash") and payload.get("acceptance_hash") != existing["acceptance_hash"]:
                 payload.pop("acceptance_hash", None)
                 payload.pop("acceptance", None)
+            # Lease ownership changes only through a cryptographically signed TASK_CLAIM.
+            if payload.get("lease") != existing.get("lease"):
+                payload.pop("lease", None)
+                payload.pop("attempt_id", None)
+                if payload.get("status") == "mining":
+                    payload.pop("status", None)
+            if existing.get("attempt_id") and payload.get("attempt_id") != existing["attempt_id"]:
+                payload.pop("attempt_id", None)
+                payload.pop("status", None)
             if task_id in self.tasks:
                 current_status = self.tasks[task_id].get("status")
                 new_status = payload.get("status")
@@ -287,6 +300,10 @@ class P2PNode:
             if self.accept_vote(payload):
                 logging.info(f"Verified vote for {payload['trajectory_hash']}")
                 await self.broadcast(raw_msg_str, exclude=websocket)
+
+        elif msg_type == MessageType.TASK_CLAIM:
+            if self.accept_task_claim(payload):
+                await self.broadcast(raw_msg_str, exclude=websocket)
                 
         elif msg_type == MessageType.SYNC_MEMPOOL:
             # Send our current state
@@ -305,16 +322,28 @@ class P2PNode:
                 if task_id in self.tasks and self.tasks[task_id].get("status") == "completed":
                     continue
                 data = dict(task_data)
-                if data.get("status") == "completed":
-                    data["status"] = "validating"
+                # Status, lease and attempt are reconstructed from signed claims/votes below.
+                if data.get("status") in ("completed", "mining", "validating"):
+                    data["status"] = "pending"
                     data.pop("result_cid", None)
+                data.pop("lease", None)
+                data.pop("attempt_id", None)
                 existing = self.tasks.get(task_id, {})
+                if existing.get("status") in ("mining", "validating"):
+                    data["status"] = existing["status"]
+                    if existing.get("lease"):
+                        data["lease"] = existing["lease"]
+                        data["attempt_id"] = existing.get("attempt_id")
                 if existing.get("acceptance_hash") and data.get("acceptance_hash") != existing["acceptance_hash"]:
                     data.pop("acceptance_hash", None)
                     data.pop("acceptance", None)
                 self.tasks.setdefault(task_id, {}).update(data)
                 self._notify_task_updated(self.tasks[task_id])
             self.trajectories.update(payload.get("trajectories", {}))
+            for leases in payload.get("task_claims", {}).values():
+                if isinstance(leases, dict):
+                    for lease in leases.values():
+                        self.accept_task_claim(lease)
             for votes in payload.get("signatures", {}).values():
                 if isinstance(votes, dict):
                     for vote in votes.values():
@@ -488,11 +517,70 @@ class P2PNode:
             logging.error(f"Error sending file {cid}: {e}")
 
     # --- Public API for Local Node ---
+    def expire_task_leases(self, now=None):
+        now = time.time() if now is None else now
+        expired = []
+        for task_id, task in self.tasks.items():
+            lease = task.get("lease")
+            if lease and not verify_lease(lease, task, now):
+                task.pop("lease", None)
+                task.pop("attempt_id", None)
+                if task.get("status") in ("mining", "validating"):
+                    task["status"] = "pending"
+                self.task_claims.pop(task_id, None)
+                self._notify_task_updated(task)
+                expired.append(task_id)
+                self._run_coroutine(self.broadcast(create_message(MessageType.TASK_UPDATED, task)))
+        return expired
+
+    def accept_task_claim(self, lease):
+        if not isinstance(lease, dict):
+            return False
+        task_id = lease.get("task_id")
+        task = self.tasks.get(task_id)
+        if not task or task.get("status") in ("completed", "failed", "validating") or not verify_lease(lease, task):
+            return False
+        claims = self.task_claims.setdefault(task_id, {})
+        if lease["lease_id"] in claims:
+            return False
+        claims[lease["lease_id"]] = lease
+        active = [claim for claim in claims.values() if verify_lease(claim, task)]
+        if not active:
+            return False
+        winner = min(active, key=lease_order)
+        current = task.get("lease")
+        if current and current.get("lease_id") == winner["lease_id"]:
+            return True
+        task["lease"] = winner
+        task["attempt_id"] = winner["lease_id"]
+        task["status"] = "mining"
+        task["miner"] = winner["miner_identity"]
+        self._notify_task_updated(task)
+        return True
+
+    def claim_task(self, task_id, wallet):
+        self.expire_task_leases()
+        task = self.tasks.get(task_id)
+        if not task or task.get("status") in ("completed", "failed", "validating"):
+            return None
+        existing = task.get("lease")
+        identity = getattr(wallet, "signing_address", None) or wallet.address
+        if existing and verify_lease(existing, task) and existing["miner_identity"] == identity:
+            return existing
+        lease = create_lease(wallet, task)
+        if not self.accept_task_claim(lease):
+            return None
+        self._run_coroutine(self.broadcast(create_message(MessageType.TASK_CLAIM, lease)))
+        return lease
+
     def accept_vote(self, vote):
         if not isinstance(vote, dict):
             return False
         trajectory = self.trajectories.get(vote.get("trajectory_hash"))
         task = self.tasks.get(vote.get("task_id"))
+        if (isinstance(trajectory, dict) and trajectory.get("attempt_id")
+                and not verify_lease(task.get("lease") if isinstance(task, dict) else None, task)):
+            return False
         if not verify_vote(vote, trajectory, task):
             return False
         votes = self.signatures.setdefault(vote["trajectory_hash"], {})
@@ -516,6 +604,8 @@ class P2PNode:
                 task.setdefault("original_prompt", task["prompt"])
                 task["prompt"] += "\n\n[JUDGE FEEDBACK]\n" + "\n".join(
                     entry["reason"] for entry in task["feedback"])
+                task.pop("lease", None)
+                task.pop("attempt_id", None)
             self._notify_task_updated(task)
             self._run_coroutine(self.broadcast(create_message(MessageType.TASK_UPDATED, task)))
         return True

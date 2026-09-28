@@ -51,6 +51,7 @@ ai/training/reproducibility.py
 ai/training/scheduler.py
 ai/training/trainer.py
 p2p/content.py
+p2p/leases.py
 p2p/network.py
 p2p/protocol.py
 p2p/votes.py
@@ -80,6 +81,7 @@ tests/test_pretraining_safety.py
 tests/test_rms_norm.py
 tests/test_rope.py
 tests/test_signed_quorum.py
+tests/test_task_leases.py
 tests/test_tokenizer.py
 tests/test_tokenizer_roundtrip.py
 tests/test_tokenizer_serialization.py

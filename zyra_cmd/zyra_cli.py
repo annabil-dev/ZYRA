@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import json
+import json as _json
 import argparse
 import subprocess
 import re
@@ -48,14 +49,24 @@ dotenv.load_dotenv(str(Path(__file__).resolve().parent.parent / '.env'))
 BRIDGE_URL = os.environ.get("ZYRA_BRIDGE_URL", "https://zyra-ai.tail3b049d.ts.net") # Hardcoded Global Bootstrap Node (Mythchain Alpha Tracker)
 
 
-def get_pending_miner_task(tasks, preferred_task_id=None):
+def get_pending_miner_task(tasks, preferred_task_id=None, miner_identity=None, now=None):
     """Return (task_id, task) or None; empty mempools are a normal state."""
+    import time as _time
+    from p2p.leases import verify_lease
+    now = _time.time() if now is None else now
+
+    def eligible(task):
+        lease = task.get("lease")
+        if lease and verify_lease(lease, task, now):
+            return task.get("status") in ("pending", "mining") and lease.get("miner_identity") == miner_identity
+        return task.get("status") in ("pending", "mining")
+
     if preferred_task_id:
         preferred = tasks.get(preferred_task_id)
-        if preferred and preferred.get("status") == "pending":
+        if preferred and preferred.get("status") == "pending" and eligible(preferred):
             return preferred_task_id, preferred
     for task_id, task in list(tasks.items()):
-        if task.get("status") == "pending":
+        if eligible(task):
             return task_id, task
     return None
 
@@ -194,7 +205,7 @@ def process_prompt(llm, prompt, history, wallet, ledger, model_name):
         print("\033[91m[REJECTED]\033[0m Task did not qualify for PoUW rewards.\n")
 
 
-def run_automode(llm, initial_task: str, history: list, wallet: ZyraWallet, ledger: ZyraLedger, model_name: str, auto_yes: bool = False, planner_model: str = None, coder_model: str = None, task_id: str = None):
+def run_automode(llm, initial_task: str, history: list, wallet: ZyraWallet, ledger: ZyraLedger, model_name: str, auto_yes: bool = False, planner_model: str = None, coder_model: str = None, task_id: str = None, attempt_id: str = None):
     global p2p_node
     import uuid
     from ai.execution.contract import make_contract, validate_contract, contract_hash, delivery_instructions, deliverable_files
@@ -207,6 +218,9 @@ def run_automode(llm, initial_task: str, history: list, wallet: ZyraWallet, ledg
             acceptance = validate_contract(p2p_node.tasks[task_id].get("acceptance"))
             if p2p_node.tasks[task_id].get("acceptance_hash") != contract_hash(acceptance):
                 raise ValueError("Task acceptance hash mismatch")
+            current_lease = p2p_node.tasks[task_id].get("lease")
+            if current_lease and (current_lease.get("lease_id") != attempt_id or current_lease.get("miner_identity") != (wallet.signing_address or wallet.address)):
+                raise ValueError("This miner no longer owns the current task lease")
         else:
             task_id = str(uuid.uuid4())
             acceptance = make_contract(initial_task)
@@ -285,6 +299,18 @@ print("hello")
     
     total_tokens_automode = 0
     max_swarm_cycles = 15
+    audit_path = os.path.abspath(os.path.join("sandbox_workspace", "_audit", f"{task_id}.jsonl"))
+    os.makedirs(os.path.dirname(audit_path), exist_ok=True)
+
+    def audit_event(event, **details):
+        """Persist swarm diagnostics outside the deliverable workspace."""
+        record = {"timestamp": time.time(), "task_id": task_id, "attempt_id": attempt_id,
+                  "event": event, **details}
+        try:
+            with open(audit_path, "a", encoding="utf-8") as audit_file:
+                audit_file.write(_json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        except OSError as exc:
+            print(f"[Audit] Could not write {audit_path}: {exc}")
     
     def generate_response(bot_history, agent_name):
         nonlocal total_tokens_automode
@@ -327,6 +353,7 @@ print("hello")
     successful_delegations = 0
     for cycle in range(max_swarm_cycles):
         print(f"\033[94m=== Swarm Cycle {cycle+1}/{max_swarm_cycles} ===\033[0m")
+        audit_event("cycle_started", cycle=cycle + 1, max_cycles=max_swarm_cycles)
         
         # Prevent Context Overflow for Planner (Keep System Prompt + last 9 messages)
         if len(planner_history) > 10:
@@ -339,6 +366,7 @@ print("hello")
         # ---------------------
             
         planner_output = generate_response(planner_history, "Planner")
+        audit_event("planner_response", cycle=cycle + 1, content=planner_output)
         planner_history.append({"role": "assistant", "content": planner_output})
         full_trajectory_log.append({"role": "planner", "content": planner_output})
         
@@ -375,7 +403,15 @@ print("hello")
                 print("[Runtime] Delivery checks passed. Ready for independent network validation.\n")
                 break
             feedback = str(validation_report)[-6000:]
-            planner_history.append({"role": "user", "content": f"DELIVERY REJECTED: {feedback}. Delegate fixes; do not weaken the client acceptance contract."})
+            audit_event("delivery_rejected", cycle=cycle + 1, report=validation_report)
+            planner_history.append({"role": "user", "content": (
+                "DELIVERY REJECTED by the independent pre-delivery validator. Fix the concrete reported issue "
+                "before claiming completion. Inspect the named file(s), then either remove unintended temporary/debug "
+                "files or document every retained deliverable in BOTH README.md and zyra.json. If startup or a test "
+                "failed, reproduce and fix that exact failure; do not weaken the client acceptance contract. "
+                "Delegate the fix to the Coder and require it to run a relevant verification command.\n"
+                f"Validator report: {feedback}\nAudit log: {audit_path}"
+            )})
             print(f"[Runtime] Delivery rejected: {validation_report.get('reason')}")
             if validation_report.get("status") == "UNAVAILABLE":
                 break
@@ -407,6 +443,7 @@ print("hello")
                 coder_history = [coder_history[0]] + coder_history[-9:]
                 
             coder_output = generate_response(coder_history, "Coder")
+            audit_event("coder_response", cycle=cycle + 1, step=step + 1, content=coder_output)
             coder_history.append({"role": "assistant", "content": coder_output})
             full_trajectory_log.append({"role": "coder", "content": coder_output})
             
@@ -457,6 +494,9 @@ print("hello")
                                 print(f"\033[91m[Failed]\033[0m {err_preview}\n")
                             else:
                                 print(f"\033[92m[Success]\033[0m Command executed.\n")
+                            audit_event("command_result", cycle=cycle + 1, step=step + 1,
+                                        command=command, returncode=result.returncode,
+                                        stdout=stdout, stderr=stderr)
                             
                             if "No such file or directory" in stderr or "Cannot find path" in stderr:
                                 coder_history.append({"role": "user", "content": f"Command '{command}' failed:\n{stderr}\n\nSYSTEM WARNING: The file does not exist! Did you forget to write it using <WRITE_FILE> first?"})
@@ -532,10 +572,19 @@ print("hello")
             planner_history.append({"role": "user", "content": "CODER REPORT: Coder reached max steps without completing the task."})
     else:
         print(f"\033[93m[Multi-Agent Swarm]\033[0m Reached maximum cycles. Stopping.\n")
+        audit_event("max_cycles_reached", max_cycles=max_swarm_cycles)
+        print(f"[Audit] Per-cycle diagnostic log: {audit_path}")
 
     if not work_verified:
         print("[Runtime] Task is not deliverable. No trajectory or reward submitted.\n")
         return False
+
+    if task_id and attempt_id:
+        from p2p.leases import verify_lease
+        current_task = p2p_node.tasks.get(task_id, {})
+        if current_task.get("attempt_id") != attempt_id or not verify_lease(current_task.get("lease"), current_task):
+            print("[P2P Lease] This task attempt expired or lost its lease. Result will not be submitted.")
+            return False
 
     # Reward for automode
     print("\033[93m[PoUW Validator]\033[0m Submitting Proof of Useful Work to P2P Network...")
@@ -589,6 +638,7 @@ print("hello")
             "wallet": target_wallet,
             "trajectory_log": cid,
             "acceptance_hash": contract_hash(acceptance),
+            "attempt_id": attempt_id or "",
             "reward": reward,
             "status": "pending_validation",
             "miner_identity": wallet.signing_address or wallet.address,
@@ -761,6 +811,11 @@ try:
                         continue
                     acceptance = original_task.get("acceptance")
                     try:
+                        from p2p.leases import verify_lease
+                        if task.get("attempt_id"):
+                            if (original_task.get("attempt_id") != task["attempt_id"]
+                                    or not verify_lease(original_task.get("lease"), original_task)):
+                                raise ValueError("Miner work lease is missing, expired, or superseded")
                         expected_hash = contract_hash(acceptance)
                         if original_task.get("acceptance_hash") != expected_hash or task.get("acceptance_hash") != expected_hash:
                             raise ValueError("Submission does not match the original task acceptance hash")
@@ -1473,7 +1528,9 @@ os.system("start cmd /k zyra")
                         import asyncio
                         preferred_task_id = None
                         while True:
-                            claimed = get_pending_miner_task(p2p_node.tasks, preferred_task_id)
+                            p2p_node.expire_task_leases()
+                            miner_identity = wallet.signing_address or wallet.address
+                            claimed = get_pending_miner_task(p2p_node.tasks, preferred_task_id, miner_identity)
                             preferred_task_id = None
                             if claimed is None:
                                 time.sleep(5)
@@ -1482,16 +1539,28 @@ os.system("start cmd /k zyra")
                             task_id, found_task = claimed
                             prompt = found_task.get("prompt")
                             reward = found_task.get("reward", 2.5)
-                            
-                            # Claim the task locally before announcing the attempt.
-                            p2p_node.tasks[task_id]["status"] = "mining"
-                            p2p_node.tasks[task_id]["miner"] = target_wallet
-                            update_msg = create_message(MessageType.TASK_UPDATED, p2p_node.tasks[task_id])
-                            asyncio.run_coroutine_threadsafe(p2p_node.broadcast(update_msg), p2p_node.loop)
+
+                            lease = p2p_node.claim_task(task_id, wallet)
+                            if lease is None:
+                                time.sleep(1)
+                                continue
+                            # Give concurrent gossip claims a short arbitration window.
+                            from p2p.leases import CLAIM_SETTLE_SECONDS
+                            time.sleep(CLAIM_SETTLE_SECONDS)
+                            p2p_node.expire_task_leases()
+                            current_lease = p2p_node.tasks.get(task_id, {}).get("lease", {})
+                            if current_lease.get("lease_id") != lease["lease_id"]:
+                                print(f"[Miner] Another signed claim won task {task_id}; skipping this attempt.")
+                                continue
 
                             print(f"\n\033[92m[P2P Mempool]\033[0m Found Task! Reward: {reward} ZYRA")
                             print(f"Task ID: \033[96m{task_id}\033[0m")
-                            delivered = run_automode(llm, prompt, history, wallet, ledger, llm.model_name, auto_yes=True, planner_model=args.planner_model, coder_model=args.coder_model, task_id=task_id)
+                            delivered = run_automode(llm, prompt, history, wallet, ledger, llm.model_name, auto_yes=True, planner_model=args.planner_model, coder_model=args.coder_model, task_id=task_id, attempt_id=lease["lease_id"])
+                            if delivered is False and p2p_node.tasks.get(task_id, {}).get("status") in ("mining", "pending"):
+                                print(f"[Miner] Task {task_id} is not submitted yet. Retrying it before polling other tasks.")
+                                preferred_task_id = task_id
+                                time.sleep(5)
+                                continue
                             # After delivery attempt, check what validator decided
                             task_status = p2p_node.tasks.get(task_id, {}).get("status")
                             

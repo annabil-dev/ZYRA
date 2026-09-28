@@ -14,6 +14,7 @@ class MessageType:
     FILE_CHUNK = "FILE_CHUNK"
     TASK_UPDATED = "TASK_UPDATED"
     TRAJECTORY_UPDATED = "TRAJECTORY_UPDATED"
+    TASK_CLAIM = "TASK_CLAIM"
 def create_message(msg_type, payload=None):
     return json.dumps({
         "type": msg_type,
