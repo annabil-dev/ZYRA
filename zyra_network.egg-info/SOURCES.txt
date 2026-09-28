@@ -74,6 +74,7 @@ tests/test_device_fallback.py
 tests/test_gradient_update.py
 tests/test_hardware.py
 tests/test_miner_wallet_migration.py
+tests/test_mns_v0.py
 tests/test_model_identity.py
 tests/test_overfit_tiny_dataset.py
 tests/test_paths.py
@@ -94,6 +95,8 @@ zyra_cmd/__init__.py
 zyra_cmd/client_state.py
 zyra_cmd/client_tasks.py
 zyra_cmd/installer.py
+zyra_cmd/mns_v0.json
+zyra_cmd/mns_v0.py
 zyra_cmd/web3_bridge.py
 zyra_cmd/zyra_cli.py
 zyra_network.egg-info/PKG-INFO

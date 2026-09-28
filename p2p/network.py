@@ -310,7 +310,8 @@ class P2PNode:
             sync_data = {
                 "tasks": self.tasks,
                 "trajectories": self.trajectories,
-                "signatures": self.signatures
+                "signatures": self.signatures,
+                "task_claims": self.task_claims
             }
             await websocket.send(create_message(MessageType.MEMPOOL_DATA, sync_data))
             

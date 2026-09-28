@@ -33,6 +33,12 @@ def test_signed_claims_converge_to_same_winner_when_nodes_see_same_set(tmp_path)
     assert first_node.tasks["coding-task"]["lease"]["lease_id"] == min(
         first_claim["lease_id"], second_claim["lease_id"])
 
+    from zyra_cmd.zyra_cli import get_pending_miner_task
+    winner_identity = min(first_claim, second_claim, key=lambda claim: claim["lease_id"])["miner_identity"]
+    loser_identity = second_claim["miner_identity"] if winner_identity == first_claim["miner_identity"] else first_claim["miner_identity"]
+    assert get_pending_miner_task(first_node.tasks, miner_identity=winner_identity)[0] == "coding-task"
+    assert get_pending_miner_task(second_node.tasks, miner_identity=loser_identity) is None
+
 
 def test_claim_signature_tamper_and_wrong_task_are_rejected(tmp_path):
     wallet = ZyraWallet(str(tmp_path / "miner"))
@@ -108,4 +114,39 @@ def test_claim_gossip_and_mempool_sync_restore_the_verified_lease(tmp_path):
         assert restored["lease"]["lease_id"] == claim["lease_id"]
         assert restored["attempt_id"] == claim["lease_id"]
         assert restored["status"] == "mining"
+    asyncio.run(scenario())
+
+
+def test_sync_mempool_response_includes_claims_for_new_peer(tmp_path):
+    async def scenario():
+        class CapturePeer:
+            def __init__(self):
+                self.messages = []
+
+            async def send(self, message):
+                self.messages.append(message)
+
+        owner = ZyraWallet(str(tmp_path / "owner"))
+        source = P2PNode()
+        task = task_template()
+        source.tasks[task["task_id"]] = task
+        claim = create_lease(owner, task)
+        assert source.accept_task_claim(claim)
+
+        peer = CapturePeer()
+        request = create_message(MessageType.SYNC_MEMPOOL)
+        await source.handle_message(parse_message(request), peer, request)
+        assert len(peer.messages) == 1
+
+        response = parse_message(peer.messages[0])
+        assert response["type"] == MessageType.MEMPOOL_DATA
+        assert response["payload"]["task_claims"][task["task_id"]][claim["lease_id"]] == claim
+
+        joining_node = P2PNode()
+        joining_node.tasks[task["task_id"]] = task_template()
+        await joining_node.handle_message(response, None, peer.messages[0])
+        restored = joining_node.tasks[task["task_id"]]
+        assert restored["lease"]["lease_id"] == claim["lease_id"]
+        assert restored["status"] == "mining"
+
     asyncio.run(scenario())

@@ -880,6 +880,7 @@ try:
                 ('/config', 'Konfigurasi Wallet dan Tracker Server'),
                 ('/wallet', 'Lihat saldo ZYRA dan alamat Wallet'),
                 ('/submit', 'Lempar tugas coding ke jaringan (Mempool)'),
+                ('/resolve', 'Cari alias .myth pada registry lokal MNS v0'),
                 ('/update', 'Cek dan install update terbaru ZYRA Network'),
                 ('exit', 'Tutup aplikasi ZYRA')
             ]
@@ -1036,6 +1037,7 @@ def main():
                     print('  \033[93m/submit --spec "acceptance.json" <task>\033[0m - Use your own runtime checks')
                     print("  \033[93m/output\033[0m  - Show result folder; /output <folder> sets it for future tasks")
                     print("  \033[93m/tasks\033[0m   - Show saved client tasks, status, and result locations")
+                    print("  \033[93m/resolve <name.myth>\033[0m - Look up a local static .myth alias")
                     print("  \033[93m/export\033[0m  - Save current chat history to a Markdown file")
                     print("  \033[93m/logs\033[0m    - Open the most recent PoUW Swarm Audit Log")
                     print("  \033[93m/judge\033[0m   - Run as P2P Validator Node")
@@ -1077,6 +1079,14 @@ def main():
                     continue
                 elif cmd == '/tasks':
                     client_monitor.show_tasks()
+                    continue
+                elif user_input.startswith('/resolve '):
+                    from zyra_cmd.mns_v0 import format_result, resolve_name
+                    try:
+                        name = user_input.split(' ', 1)[1].strip()
+                        print(format_result(resolve_name(name)) + "\n")
+                    except ValueError as exc:
+                        print(f"[MNS v0] {exc}\n")
                     continue
                 elif cmd == '/logs':
                     import glob

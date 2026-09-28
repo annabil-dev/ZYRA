@@ -1,0 +1,19 @@
+{
+  "version": 0,
+  "scope": "local-static",
+  "notice": "Local development aliases only; not chain-backed and not public DNS.",
+  "names": {
+    "mythchain.myth": [
+      {"type": "A", "value": "127.0.0.1", "ttl": 60},
+      {"type": "SERVICE", "value": "mythchain", "ttl": 60}
+    ],
+    "rpc.mythchain.myth": [
+      {"type": "A", "value": "127.0.0.1", "ttl": 60},
+      {"type": "RPC", "value": "http://127.0.0.1:26657", "ttl": 60}
+    ],
+    "zyra.mythchain.myth": [
+      {"type": "A", "value": "127.0.0.1", "ttl": 60},
+      {"type": "SERVICE", "value": "zyra", "ttl": 60}
+    ]
+  }
+}

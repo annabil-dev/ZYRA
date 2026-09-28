@@ -92,7 +92,7 @@ that digest before making it available to the judge or client. Invalid chunks,
 oversized chunks, and artifacts larger than 256 MiB are rejected. Legacy opaque
 IDs remain readable for compatibility but carry no content-integrity guarantee.
 
-## Signed Task Leases (local changes after v2.1.53)
+## Signed Task Leases (v2.1.54+)
 
 Miners now publish a signed 30-minute lease for a task. Peers that see competing
 claims choose the same lease ID deterministically; stale leases expire back to a
@@ -101,3 +101,18 @@ judge votes. This reduces duplicate mining and recovers tasks after a miner stop
 It is a best-effort P2P lease, not a globally atomic lock: partitions or delayed
 claims can still cause duplicate work. Chain-level consensus is required for a
 single globally final task owner.
+
+Peer mempool synchronization includes signed task claims so a joining peer can
+restore the active lease before considering a task. This improves convergence
+when peers exchange state; it does not provide a global lock during a network
+partition.
+
+## Local MNS v0 Lookup
+
+The interactive command `/resolve <name.myth>` looks up a small, bundled local
+development registry for `.myth` names. For example, `/resolve rpc.mythchain.myth`
+shows the local RPC alias. This is application-level lookup only: it does not
+configure operating-system DNS, make `.myth` names resolve in browsers, or read
+ownership/records from Mythchain. The default entries point to loopback and may
+not represent running services. Set `ZYRA_MNS_V0_FILE` to use a different local
+JSON registry file.
