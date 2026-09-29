@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: zyra-network
-Version: 2.1.60
+Version: 2.1.61
 Summary: A powerful, self-organizing decentralized AI network client.
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
@@ -128,6 +128,9 @@ generated rubric before registration; it is fixed into the acceptance hash befor
 Miner claim. If no local model is available, ZYRA creates a conservative executable
 runtime rubric. To supply a carefully customized contract instead, use
 `/submit --spec "acceptance.json" <prompt>`.
+For multiple ZYRA nodes on one Windows account, set a distinct `ZYRA_DATA_DIR`
+per process to give each node its own P2P wallet and local state. Leave Windows
+`APPDATA` unchanged so Python continues to find the installed `zyra-network` package.
 
 Each criterion has a unique lowercase `id`, client-readable `description`, positive
 integer `weight`, `hard_gate`, and machine-executable `check`. Example criteria for
@@ -164,9 +167,22 @@ probability of success.
 For Mythchain tasks, registration commits the weighted rubric; each Cosmos Judge
 vote includes its per-criterion result JSON. The keeper recomputes the 2-of-3
 criterion majority and canonical weighted score. The weighted CLI integration is
-included in ZYRA v2.1.60. Mythchain validators must run the matching updated binary;
+included in ZYRA v2.1.61. Mythchain validators must run the matching updated binary;
 installing the Python package does not upgrade or start chain validators. Reward
 transfers and token settlement remain unimplemented.
+
+## Isolating multiple local nodes on one Windows account
+
+Keep Windows `APPDATA` unchanged so the Python launcher can find the installed
+package. Set `ZYRA_DATA_DIR` to a different folder for each Client/Miner/Judge
+process to give each one its own local P2P wallet, ledger, and task database. Keep
+the Client's data directory stable across restarts so it can recover its task
+history.
+
+```powershell
+$env:APPDATA = "$env:USERPROFILE\AppData\Roaming"
+$env:ZYRA_DATA_DIR = "$env:LOCALAPPDATA\ZYRA-Mythchain\miner-a"
+```
 
 ## Signed Task Leases (v2.1.54+)
 

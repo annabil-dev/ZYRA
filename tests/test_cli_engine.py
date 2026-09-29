@@ -5,6 +5,17 @@ from zyra_cmd import installer
 from zyra_cmd.client_state import ClientState
 
 
+def test_zyra_data_dir_can_isolate_node_wallets_without_changing_python_appdata():
+    import os
+    from zyra_cmd.zyra_cli import get_zyra_data_dir
+
+    appdata = r"C:\Users\test\AppData\Roaming"
+    assert get_zyra_data_dir({"APPDATA": appdata}) == os.path.join(appdata, "ZYRA AI")
+
+    custom = r"C:\Users\test\AppData\Local\ZYRA\miner-a"
+    assert get_zyra_data_dir({"APPDATA": appdata, "ZYRA_DATA_DIR": custom}) == os.path.abspath(custom)
+
+
 def missing_ollama(*args, **kwargs):
     raise FileNotFoundError("ollama")
 

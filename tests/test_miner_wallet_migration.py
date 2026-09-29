@@ -77,3 +77,14 @@ def test_chain_mode_does_not_let_advisory_p2p_lease_hide_task():
             "lease": {"miner_identity": "another-p2p-miner"}, "attempt_id": "p2p-attempt"}
     tasks = {"chain-task": task}
     assert get_pending_miner_task(tasks, miner_identity="this-miner", canonical_mode=True) == ("chain-task", task)
+
+
+def test_required_chain_mode_skips_old_unregistered_advisory_tasks():
+    advisory = {"task_id": "old-task", "status": "pending", "lease_mode": "p2p-advisory"}
+    canonical = {"task_id": "chain-task", "status": "pending", "lease_mode": "mythchain"}
+    tasks = {"old-task": advisory, "chain-task": canonical}
+
+    assert get_pending_miner_task(tasks, canonical_mode=True) == ("chain-task", canonical)
+    assert get_pending_miner_task(tasks, "old-task", canonical_mode=True) == ("chain-task", canonical)
+    assert get_pending_miner_task(tasks, canonical_mode=True,
+                                  excluded_task_ids={"chain-task"}) is None

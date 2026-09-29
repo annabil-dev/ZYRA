@@ -49,14 +49,23 @@ dotenv.load_dotenv(str(Path(__file__).resolve().parent.parent / '.env'))
 BRIDGE_URL = os.environ.get("ZYRA_BRIDGE_URL", "https://zyra-ai.tail3b049d.ts.net") # Hardcoded Global Bootstrap Node (Mythchain Alpha Tracker)
 
 
-def get_pending_miner_task(tasks, preferred_task_id=None, miner_identity=None, now=None, canonical_mode=False):
+def get_pending_miner_task(tasks, preferred_task_id=None, miner_identity=None, now=None,
+                           canonical_mode=False, excluded_task_ids=None):
     """Return (task_id, task) or None; empty mempools are a normal state."""
     import time as _time
     from p2p.leases import verify_lease
     now = _time.time() if now is None else now
+    excluded_task_ids = set(excluded_task_ids or ())
 
-    def eligible(task):
-        if canonical_mode or task.get("lease_mode") == "mythchain":
+    def eligible(task_id, task):
+        if task_id in excluded_task_ids:
+            return False
+        if canonical_mode:
+            # A required-chain miner must ignore old/advisory P2P tasks; only a
+            # Client task explicitly registered for Mythchain can be claimed.
+            return (task.get("lease_mode") == "mythchain"
+                    and task.get("status") in ("pending", "mining"))
+        if task.get("lease_mode") == "mythchain":
             return task.get("status") in ("pending", "mining")
         lease = task.get("lease")
         if lease and verify_lease(lease, task, now):
@@ -65,10 +74,10 @@ def get_pending_miner_task(tasks, preferred_task_id=None, miner_identity=None, n
 
     if preferred_task_id:
         preferred = tasks.get(preferred_task_id)
-        if preferred and preferred.get("status") == "pending" and eligible(preferred):
+        if preferred and preferred.get("status") == "pending" and eligible(preferred_task_id, preferred):
             return preferred_task_id, preferred
     for task_id, task in list(tasks.items()):
-        if eligible(task):
+        if eligible(task_id, task):
             return task_id, task
     return None
 
@@ -79,6 +88,16 @@ def claim_mythchain_task(task_id, acceptance_hash, role="miner", config=None, ad
     chain_config = config or MythchainConfig.from_env(role)
     adapter = (adapter_factory or MythchainTaskAdapter)(chain_config)
     return chain_config, adapter.claim_task(task_id, acceptance_hash, criteria=criteria)
+
+
+def get_zyra_data_dir(environ=None):
+    """Resolve ZYRA-local state independently from Python's APPDATA user-site path."""
+    env = os.environ if environ is None else environ
+    configured = env.get("ZYRA_DATA_DIR")
+    if configured:
+        return os.path.abspath(os.path.expandvars(os.path.expanduser(configured)))
+    appdata = env.get("APPDATA", os.path.expanduser("~"))
+    return os.path.join(appdata, "ZYRA AI")
 
 def print_animated(text):
     for char in text:
@@ -1081,7 +1100,7 @@ def main():
     print(f"\033[92m[ZYRA CLI]\033[0m Starting Local Agentic AI...")
     
     # Initialize Core Components
-    user_data_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZYRA AI")
+    user_data_dir = get_zyra_data_dir()
     wallet = ZyraWallet(user_data_dir)
     ledger = ZyraLedger(user_data_dir)
     from zyra_cmd.client_state import ClientState
@@ -1702,23 +1721,51 @@ os.system("start cmd /k zyra")
                         print("\033[91m[Error]\033[0m /mine requires local AI. Use /engine to install/start Ollama.\n")
                         continue
                     print("\n\033[93m[Miner]\033[0m Starting ZYRA Auto-Miner...")
-                    print("\033[96m[System]\033[0m Scanning P2P Mempool for new tasks (Press Ctrl+C to stop)...\n")
+                    print("\033[96m[System]\033[0m Press Ctrl+C to stop mining.\n")
                     target_wallet = wallet.metamask_address if hasattr(wallet, 'metamask_address') and wallet.metamask_address else wallet.address
                     if not target_wallet: target_wallet = wallet.address
+
+                    last_miner_status = None
+
+                    def set_miner_status(message):
+                        nonlocal last_miner_status
+                        message = str(message).replace("\r", " ").replace("\n", " ")[:120]
+                        if message != last_miner_status:
+                            sys.stdout.write("\r\033[K" + message)
+                            sys.stdout.flush()
+                            last_miner_status = message
+
+                    def clear_miner_status():
+                        nonlocal last_miner_status
+                        if last_miner_status is not None:
+                            sys.stdout.write("\r\033[K")
+                            sys.stdout.flush()
+                            last_miner_status = None
                     
                     try:
                         import time
                         from p2p.protocol import MessageType, create_message
                         import asyncio
                         preferred_task_id = None
+                        canonical_retry_after = {}
                         while True:
                             p2p_node.expire_task_leases()
                             miner_identity = wallet.signing_address or wallet.address
+                            canonical_mode = os.environ.get("ZYRA_MYTHCHAIN_MODE", "off").lower() == "required"
+                            now_monotonic = time.monotonic()
+                            excluded_task_ids = {
+                                task_id for task_id, retry_at in canonical_retry_after.items()
+                                if retry_at > now_monotonic
+                            }
                             claimed = get_pending_miner_task(
                                 p2p_node.tasks, preferred_task_id, miner_identity,
-                                canonical_mode=os.environ.get("ZYRA_MYTHCHAIN_MODE", "off").lower() == "required")
+                                canonical_mode=canonical_mode, excluded_task_ids=excluded_task_ids)
                             preferred_task_id = None
                             if claimed is None:
+                                set_miner_status(
+                                    "[Mythchain] Waiting for registered tasks..." if canonical_mode
+                                    else "[System] Polling P2P mempool for tasks..."
+                                )
                                 time.sleep(5)
                                 continue
 
@@ -1735,15 +1782,19 @@ os.system("start cmd /k zyra")
                                         task_id, found_task.get("acceptance_hash", ""),
                                         criteria=(found_task.get("acceptance") or {}).get("criteria"))
                                 except Exception as exc:
-                                    print(f"[Mythchain] Canonical claim unavailable; not starting task: {exc}")
+                                    set_miner_status(f"[Mythchain] Claim unavailable; retrying: {exc}")
+                                    canonical_retry_after[task_id] = time.monotonic() + 30
                                     time.sleep(5)
                                     continue
                                 if canonical_lease is None:
-                                    print(f"[Mythchain] Another miner owns task {task_id}; continuing to poll.")
+                                    set_miner_status("[Mythchain] Lease belongs to another Miner; polling...")
+                                    canonical_retry_after[task_id] = time.monotonic() + 15
                                     time.sleep(5)
                                     continue
+                                canonical_retry_after.pop(task_id, None)
                                 canonical_attempt_id = canonical_lease.get(
                                     "attempt_id", canonical_lease.get("attemptId"))
+                                clear_miner_status()
                                 print(f"[Mythchain] Canonical lease confirmed: attempt {canonical_attempt_id}")
 
                             lease = p2p_node.claim_task(task_id, wallet)
@@ -1756,9 +1807,11 @@ os.system("start cmd /k zyra")
                             p2p_node.expire_task_leases()
                             current_lease = p2p_node.tasks.get(task_id, {}).get("lease", {})
                             if current_lease.get("lease_id") != lease["lease_id"]:
+                                clear_miner_status()
                                 print(f"[Miner] Another signed claim won task {task_id}; skipping this attempt.")
                                 continue
 
+                            clear_miner_status()
                             print(f"\n\033[92m[P2P Mempool]\033[0m Found Task! Reward: {reward} ZYRA")
                             print(f"Task ID: \033[96m{task_id}\033[0m")
                             delivered = run_automode(llm, prompt, history, wallet, ledger, llm.model_name, auto_yes=True, planner_model=args.planner_model, coder_model=args.coder_model, task_id=task_id, attempt_id=lease["lease_id"], canonical_attempt_id=canonical_attempt_id)
@@ -1784,9 +1837,10 @@ os.system("start cmd /k zyra")
                             else:
                                 print(f"\033[93m[Miner]\033[0m Task {task_id} status: {task_status}. Moving on.\n")
                             
-                            print("\n\033[96m[System]\033[0m Scanning P2P Mempool for next task...\n")
+                            set_miner_status("[System] Polling P2P/Mythchain for next task...")
                             time.sleep(2)
                     except KeyboardInterrupt:
+                        clear_miner_status()
                         print("\n\033[93m[Miner]\033[0m Auto-Miner stopped.\033[0m\n")
                     continue
                 
