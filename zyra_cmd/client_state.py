@@ -103,7 +103,7 @@ class ClientState:
         with self._connect() as db:
             row = db.execute("SELECT * FROM client_tasks WHERE task_id = ?",
                              (payload.get("task_id"),)).fetchone()
-            if not row or row["download_status"] == "downloaded":
+            if not row:
                 return
             status = payload.get("status", row["status"])
             if status not in {"pending", "mining", "validating", "completed", "rejected", "failed"}:
@@ -116,9 +116,17 @@ class ClientState:
                 cid = row["result_cid"]
             if cid is not None and not isinstance(cid, str):
                 cid = row["result_cid"]
-            if status != row["status"] or cid != row["result_cid"]:
-                db.execute("""UPDATE client_tasks SET status = ?, result_cid = ?, updated_at = ?
-                              WHERE task_id = ?""", (status, cid, time.time(), row["task_id"]))
+            stored_payload = json.loads(row["payload"])
+            score_report = payload.get("acceptance_score_report")
+            if isinstance(score_report, dict):
+                stored_payload["acceptance_score_report"] = score_report
+            stored_payload["status"] = status
+            serialized_payload = json.dumps(stored_payload)
+            if (status != row["status"] or cid != row["result_cid"]
+                    or serialized_payload != row["payload"]):
+                db.execute("""UPDATE client_tasks SET payload = ?, status = ?, result_cid = ?, updated_at = ?
+                              WHERE task_id = ?""",
+                           (serialized_payload, status, cid, time.time(), row["task_id"]))
 
     def set_download(self, task_id, status, *, result_path=None, zip_path=None, error=None):
         with self._connect() as db:

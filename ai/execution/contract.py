@@ -6,9 +6,15 @@ import re
 import shlex
 from pathlib import Path, PurePosixPath
 
+try:
+    from .scoring import validate_criteria
+except ImportError:  # Trusted runtime imports contract.py as a standalone module.
+    from scoring import validate_criteria
+
 RUNTIME = "zyra-python-v1"
 PROFILES = {"python", "flask-web"}
 IGNORED_DIRS = {"__pycache__", ".git", ".venv", "venv", "node_modules"}
+CRITERION_CHECK_TYPES = {"application_runs", "stdout_contains", "http", "browser_contains", "browser_fetch"}
 
 
 def relative_path(value):
@@ -20,12 +26,63 @@ def relative_path(value):
     return value
 
 
+def validate_criterion_check(check, profile):
+    if (not isinstance(check, dict) or not isinstance(check.get("type"), str)
+            or check.get("type") not in CRITERION_CHECK_TYPES):
+        raise ValueError(f"criterion check type must be one of {sorted(CRITERION_CHECK_TYPES)}")
+    if len(json.dumps(check, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")) > 16 * 1024:
+        raise ValueError("criterion check JSON cannot exceed 16 KiB")
+    check_type = check["type"]
+    if check_type == "application_runs":
+        if set(check) != {"type"}:
+            raise ValueError("application_runs criterion check only accepts type")
+        return
+    if check_type == "stdout_contains":
+        if profile != "python" or set(check) != {"type", "text"}:
+            raise ValueError("stdout_contains criteria require a python profile and only type/text fields")
+        if (not isinstance(check["text"], str) or not check["text"].strip()
+                or len(check["text"].encode("utf-8")) > 1000):
+            raise ValueError("stdout_contains criterion text must contain 1 to 1000 characters")
+        return
+    if check_type == "browser_contains":
+        if profile != "flask-web" or set(check) != {"type", "text"}:
+            raise ValueError("browser_contains criteria require flask-web and only type/text fields")
+        if (not isinstance(check["text"], str) or not check["text"].strip()
+                or len(check["text"].encode("utf-8")) > 1000):
+            raise ValueError("browser_contains criterion text must contain 1 to 1000 characters")
+        return
+    if check_type == "browser_fetch":
+        if profile != "flask-web" or set(check) != {"type", "path"}:
+            raise ValueError("browser_fetch criteria require flask-web and only type/path fields")
+        path = check["path"]
+        if not isinstance(path, str) or not path.startswith("/") or path.startswith("//") or "#" in path:
+            raise ValueError("browser_fetch criterion path must be a local path starting with /")
+        return
+
+    allowed = {"type", "path", "status", "content_type", "contains", "json_keys", "json_equals"}
+    if profile != "flask-web" or set(check) - allowed or not isinstance(check.get("path"), str):
+        raise ValueError("http criterion checks require flask-web and supported HTTP assertion fields")
+    path = check["path"]
+    if not path.startswith("/") or path.startswith("//") or "#" in path:
+        raise ValueError("HTTP criterion paths must be local paths starting with /")
+    if not isinstance(check.get("status", 200), int) or not 200 <= check.get("status", 200) <= 599:
+        raise ValueError("Invalid HTTP criterion status")
+    if not isinstance(check.get("content_type", ""), str):
+        raise ValueError("HTTP criterion content_type must be text")
+    for field in ("contains", "json_keys"):
+        values = check.get(field, [])
+        if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
+            raise ValueError(f"HTTP criterion {field} must be a list of strings")
+    if "json_equals" in check and not isinstance(check["json_equals"], dict):
+        raise ValueError("HTTP criterion json_equals must be an object")
+
+
 def validate_contract(value):
     contract = json.loads(json.dumps(value))
     if not isinstance(contract, dict) or contract.get("version") != 1:
         raise ValueError("Acceptance contract version must be 1")
     unknown = set(contract) - {"version", "runtime", "profile", "entrypoint", "args", "port",
-                               "http_checks", "stdout_contains", "browser_contains"}
+                               "http_checks", "stdout_contains", "browser_contains", "criteria"}
     if unknown:
         raise ValueError(f"Unknown acceptance fields: {sorted(unknown)}")
     if contract.get("runtime") != RUNTIME or contract.get("profile") not in PROFILES:
@@ -74,6 +131,12 @@ def validate_contract(value):
         raise ValueError("browser_contains must be a list of strings")
     if contract["profile"] == "python" and visible:
         raise ValueError("browser_contains requires flask-web")
+    if "criteria" in contract:
+        contract["criteria"] = validate_criteria(contract["criteria"])
+        for criterion in contract["criteria"]:
+            if "check" not in criterion:
+                raise ValueError(f"Criterion {criterion['id']} needs a machine-executable check")
+            validate_criterion_check(criterion["check"], contract["profile"])
     return contract
 
 
@@ -96,7 +159,16 @@ def startup_command(contract):
     return shlex.join(["python", contract["entrypoint"], *contract["args"]])
 
 
-def parse_submission(text):
+def _ensure_weighted_criteria(contract, prompt, generator=None):
+    if contract.get("criteria"):
+        return validate_contract(contract)
+    from .criterion_generator import generate_criteria
+    criteria, _source = generate_criteria(prompt, contract["profile"], generator=generator)
+    contract["criteria"] = criteria
+    return validate_contract(contract)
+
+
+def parse_submission(text, criterion_generator=None):
     """Preserve Windows paths and prompt quoting; only parse leading CLI options."""
     text = text.strip()
     if text.startswith("--spec "):
@@ -105,13 +177,17 @@ def parse_submission(text):
             raise ValueError('/submit --spec "acceptance.json" <task>')
         path = next(part for part in match.groups()[:3] if part is not None)
         contract = validate_contract(json.loads(Path(path).expanduser().read_text(encoding="utf-8")))
-        return match.group(4).strip(), contract
+        prompt = match.group(4).strip()
+        contract = _ensure_weighted_criteria(contract, prompt, generator=criterion_generator)
+        return prompt, contract
     web = text.startswith("--web ")
     if web:
         text = text[len("--web "):].strip()
     if not text or text.startswith("--"):
         raise ValueError("Use /submit [--web | --spec <file>] <task>")
-    return text, make_contract(text, web=web)
+    contract = make_contract(text, web=web)
+    contract = _ensure_weighted_criteria(contract, text, generator=criterion_generator)
+    return text, contract
 
 
 def deliverable_files(root):
@@ -190,5 +266,7 @@ Always provide zyra.json with runtime, profile, entrypoint copied from the contr
 run_command (exactly {startup_command(contract)!r}), and files (every deliverable path -> purpose).
 List README.md and zyra.json themselves too. Do not write verification claims without running the app.
 The judge checks real startup and client HTTP/output expectations independently of your unit tests.
+If the client contract includes weighted criteria, do not remove or change them. Report evidence and
+known failures for every criterion; hard-gate criteria must pass for the task to pass.
 If a required framework/dependency is unsupported, report that limitation instead of producing fake substitutes.
 """

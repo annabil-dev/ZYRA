@@ -28,9 +28,11 @@ ai/dataset/corpus/extractor.py
 ai/execution/Dockerfile
 ai/execution/__init__.py
 ai/execution/contract.py
+ai/execution/criterion_generator.py
 ai/execution/runner.py
 ai/execution/runtime-requirements.txt
 ai/execution/runtime.py
+ai/execution/scoring.py
 ai/inference/generator.py
 ai/inference/local_llm_client.py
 ai/models/__init__.py
@@ -55,6 +57,7 @@ p2p/leases.py
 p2p/network.py
 p2p/protocol.py
 p2p/votes.py
+tests/test_acceptance_scoring.py
 tests/test_attention.py
 tests/test_baseline_model.py
 tests/test_bpe.py
@@ -76,6 +79,7 @@ tests/test_hardware.py
 tests/test_miner_wallet_migration.py
 tests/test_mns_v0.py
 tests/test_model_identity.py
+tests/test_mythchain_adapter.py
 tests/test_overfit_tiny_dataset.py
 tests/test_paths.py
 tests/test_pretraining_safety.py
@@ -97,6 +101,7 @@ zyra_cmd/client_tasks.py
 zyra_cmd/installer.py
 zyra_cmd/mns_v0.json
 zyra_cmd/mns_v0.py
+zyra_cmd/mythchain_adapter.py
 zyra_cmd/web3_bridge.py
 zyra_cmd/zyra_cli.py
 zyra_network.egg-info/PKG-INFO

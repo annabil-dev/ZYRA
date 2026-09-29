@@ -1,6 +1,7 @@
 """Resume client task tracking and result downloads after a CLI restart."""
 
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -59,6 +60,11 @@ class ClientTaskMonitor:
             tasks = saved[:5]
         for task in tasks:
             tid = task["task_id"]
+            try:
+                stored_payload = json.loads(task["payload"])
+            except (TypeError, json.JSONDecodeError):
+                stored_payload = {}
+            acceptance_report = stored_payload.get("acceptance_score_report", {})
             if task["download_status"] == "downloaded":
                 self.notify(f"[Selesai] {tid}\n  Workspace: {task['result_path']}\n  ZIP: {task['zip_path']}")
             else:
@@ -66,6 +72,8 @@ class ClientTaskMonitor:
                             f"  Folder tujuan: {task['output_dir']}")
                 if task["error"]:
                     self.notify(f"  Kendala terakhir: {task['error']}")
+            if isinstance(acceptance_report, dict) and acceptance_report.get("client_report_markdown"):
+                self.notify(f"\n[Acceptance review] {tid}\n{acceptance_report['client_report_markdown']}")
         if startup:
             self.notify("[Client] Pemantauan dilanjutkan saat terhubung ke peer. Ketik /tasks untuk semua task.\n")
 

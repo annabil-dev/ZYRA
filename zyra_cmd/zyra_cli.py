@@ -49,13 +49,15 @@ dotenv.load_dotenv(str(Path(__file__).resolve().parent.parent / '.env'))
 BRIDGE_URL = os.environ.get("ZYRA_BRIDGE_URL", "https://zyra-ai.tail3b049d.ts.net") # Hardcoded Global Bootstrap Node (Mythchain Alpha Tracker)
 
 
-def get_pending_miner_task(tasks, preferred_task_id=None, miner_identity=None, now=None):
+def get_pending_miner_task(tasks, preferred_task_id=None, miner_identity=None, now=None, canonical_mode=False):
     """Return (task_id, task) or None; empty mempools are a normal state."""
     import time as _time
     from p2p.leases import verify_lease
     now = _time.time() if now is None else now
 
     def eligible(task):
+        if canonical_mode or task.get("lease_mode") == "mythchain":
+            return task.get("status") in ("pending", "mining")
         lease = task.get("lease")
         if lease and verify_lease(lease, task, now):
             return task.get("status") in ("pending", "mining") and lease.get("miner_identity") == miner_identity
@@ -69,6 +71,14 @@ def get_pending_miner_task(tasks, preferred_task_id=None, miner_identity=None, n
         if eligible(task):
             return task_id, task
     return None
+
+
+def claim_mythchain_task(task_id, acceptance_hash, role="miner", config=None, adapter_factory=None, criteria=None):
+    """Claim a task through Mythchain and return (config, canonical lease)."""
+    from zyra_cmd.mythchain_adapter import MythchainConfig, MythchainTaskAdapter
+    chain_config = config or MythchainConfig.from_env(role)
+    adapter = (adapter_factory or MythchainTaskAdapter)(chain_config)
+    return chain_config, adapter.claim_task(task_id, acceptance_hash, criteria=criteria)
 
 def print_animated(text):
     for char in text:
@@ -205,7 +215,7 @@ def process_prompt(llm, prompt, history, wallet, ledger, model_name):
         print("\033[91m[REJECTED]\033[0m Task did not qualify for PoUW rewards.\n")
 
 
-def run_automode(llm, initial_task: str, history: list, wallet: ZyraWallet, ledger: ZyraLedger, model_name: str, auto_yes: bool = False, planner_model: str = None, coder_model: str = None, task_id: str = None, attempt_id: str = None):
+def run_automode(llm, initial_task: str, history: list, wallet: ZyraWallet, ledger: ZyraLedger, model_name: str, auto_yes: bool = False, planner_model: str = None, coder_model: str = None, task_id: str = None, attempt_id: str = None, canonical_attempt_id: str = None):
     global p2p_node
     import uuid
     from ai.execution.contract import make_contract, validate_contract, contract_hash, delivery_instructions, deliverable_files
@@ -293,7 +303,8 @@ print("hello")
 </WRITE_FILE>
 6. ANTI-LAZINESS POLICY: If the Planner asks you to VERIFY or CHECK a file/result, you MUST execute a command (like `cat` or running a script) in the SAME turn to prove it works.
 7. When the delegated step is fully complete, output exactly:
-[STEP_COMPLETE]"""
+[STEP_COMPLETE]
+8. If given an independent DELIVERY VALIDATOR report, treat it as a blocking requirement. Do not claim a fix after only reading files or rerunning tests; use <WRITE_FILE> to make the required change, then run a relevant verification. Preserve the client's acceptance hash and run command exactly."""
     coder_sys += "\n" + delivery_rules
     coder_history.append({"role": "user", "content": coder_sys})
     
@@ -351,6 +362,8 @@ print("hello")
         return final_text
 
     successful_delegations = 0
+    pending_delivery_feedback = None
+    feedback_change_made = False
     for cycle in range(max_swarm_cycles):
         print(f"\033[94m=== Swarm Cycle {cycle+1}/{max_swarm_cycles} ===\033[0m")
         audit_event("cycle_started", cycle=cycle + 1, max_cycles=max_swarm_cycles)
@@ -385,6 +398,8 @@ print("hello")
                         os.makedirs(os.path.dirname(abs_path) or '.', exist_ok=True)
                         with open(abs_path, 'w', encoding='utf-8') as f:
                             f.write(content)
+                        if pending_delivery_feedback:
+                            feedback_change_made = True
                         planner_history.append({"role": "user", "content": f"Successfully wrote to {file_path}"})
                     except Exception as e:
                         print(f"\033[91m[Failed]\033[0m {e}\n")
@@ -401,8 +416,11 @@ print("hello")
             work_verified, validation_report = validate_workspace(sandbox_dir, acceptance)
             if work_verified:
                 print("[Runtime] Delivery checks passed. Ready for independent network validation.\n")
+                pending_delivery_feedback = None
                 break
             feedback = str(validation_report)[-6000:]
+            pending_delivery_feedback = feedback
+            feedback_change_made = False
             audit_event("delivery_rejected", cycle=cycle + 1, report=validation_report)
             planner_history.append({"role": "user", "content": (
                 "DELIVERY REJECTED by the independent pre-delivery validator. Fix the concrete reported issue "
@@ -432,6 +450,14 @@ print("hello")
         preview_instr = preview_instr if len(preview_instr) < 60 else preview_instr[:60] + "..."
         print(f"\033[95m[Planner -> Coder]\033[0m \033[96m{preview_instr}\033[0m\n")
         coder_history.append({"role": "user", "content": f"PLANNER INSTRUCTION: {delegate_instruction}"})
+        if pending_delivery_feedback:
+            coder_history.append({"role": "user", "content": (
+                "INDEPENDENT DELIVERY FIX REQUIRED. The previous delivery was rejected. "
+                "Read this exact validator report, change the named deliverable(s) using WRITE_FILE, "
+                "and run a relevant verification. Do not only inspect the files or rerun passing tests. "
+                "Do not remove required files or change the client's acceptance contract.\n"
+                f"Validator report: {pending_delivery_feedback}"
+            )})
         
 
         coder_steps = 5
@@ -446,6 +472,19 @@ print("hello")
             audit_event("coder_response", cycle=cycle + 1, step=step + 1, content=coder_output)
             coder_history.append({"role": "assistant", "content": coder_output})
             full_trajectory_log.append({"role": "coder", "content": coder_output})
+
+            has_write_file = re.search(r"<WRITE_FILE(?:\s+path=\"[^\"]+\")?>", coder_output,
+                                        re.IGNORECASE) is not None
+            if (pending_delivery_feedback and "[STEP_COMPLETE]" in coder_output
+                    and not feedback_change_made and not has_write_file):
+                print("[Coder Agent] Validator fix not complete: inspect-only/test-only step rejected.")
+                coder_history.append({"role": "user", "content": (
+                    "Do not mark the delivery fix complete yet: this turn did not write a corrected file. "
+                    "Use <WRITE_FILE path=\"...\"> to fix the exact validator issue, then verify it."
+                )})
+                audit_event("coder_fix_completion_rejected", cycle=cycle + 1, step=step + 1,
+                            reason="No file change after validator rejection")
+                continue
             
             pattern = r"<(CMD|WRITE_FILE)(?:\s+path=\"([^\"]+)\")?>\n*(.*?)\n*(?:</\1>|$)"
             actions = list(re.finditer(pattern, coder_output, re.DOTALL))
@@ -537,6 +576,8 @@ print("hello")
                             os.makedirs(os.path.dirname(abs_path) or '.', exist_ok=True)
                             with open(abs_path, 'w', encoding='utf-8') as f:
                                 f.write(content)
+                            if pending_delivery_feedback:
+                                feedback_change_made = True
                             print(f"\033[92m[Success]\033[0m File written.\n")
                             coder_history.append({"role": "user", "content": f"Successfully wrote to {file_path}"})
                             coder_action_log.append(f"[WRITE_FILE] {file_path} (Success)")
@@ -574,6 +615,13 @@ print("hello")
         print(f"\033[93m[Multi-Agent Swarm]\033[0m Reached maximum cycles. Stopping.\n")
         audit_event("max_cycles_reached", max_cycles=max_swarm_cycles)
         print(f"[Audit] Per-cycle diagnostic log: {audit_path}")
+        if (not work_verified and isinstance(validation_report, dict)
+                and validation_report.get("delivery_ready")
+                and isinstance(validation_report.get("criteria_results"), dict)):
+            # Submit the final measurable partial result so independent judges can
+            # score it; the chain outcome/payout follows the canonical rubric.
+            work_verified = True
+            print("[Runtime] Swarm cycles exhausted; submitting the measured partial result for independent judging.\n")
 
     if not work_verified:
         print("[Runtime] Task is not deliverable. No trajectory or reward submitted.\n")
@@ -584,6 +632,21 @@ print("hello")
         current_task = p2p_node.tasks.get(task_id, {})
         if current_task.get("attempt_id") != attempt_id or not verify_lease(current_task.get("lease"), current_task):
             print("[P2P Lease] This task attempt expired or lost its lease. Result will not be submitted.")
+            return False
+
+    if task_id and canonical_attempt_id:
+        from zyra_cmd.mythchain_adapter import MythchainConfig, MythchainTaskAdapter
+        try:
+            chain_config = MythchainConfig.from_env("miner")
+            canonical = MythchainTaskAdapter(chain_config).query_task(task_id)
+        except Exception as exc:
+            print(f"[Mythchain] Cannot confirm canonical lease before delivery: {exc}")
+            return False
+        if (not canonical
+                or canonical.get("attempt_id", canonical.get("attemptId")) != canonical_attempt_id
+                or canonical.get("miner_address", canonical.get("minerAddress")) != chain_config.address
+                or str(canonical.get("status", "")).upper() != "LEASED"):
+            print("[Mythchain] Canonical task lease changed or expired. Result will not be submitted.")
             return False
 
     # Reward for automode
@@ -619,6 +682,21 @@ print("hello")
         wallet_address=wallet.address
     )
     reward = proof.get('reward', 2.5)
+
+    chain_result_committed = False
+    if task_id and canonical_attempt_id:
+        try:
+            from zyra_cmd.mythchain_adapter import MythchainConfig, MythchainTaskAdapter
+            chain_config = MythchainConfig.from_env("miner")
+            canonical_result = MythchainTaskAdapter(chain_config).submit_task_result(
+                task_id, canonical_attempt_id, cid, proof["proof_hash"])
+            print(f"[Mythchain] Result committed for canonical attempt {canonical_result.get('attempt_id', canonical_result.get('attemptId'))}.")
+            chain_result_committed = True
+            p2p_node.tasks[task_id]["chain_attempt_id"] = canonical_attempt_id
+            p2p_node.tasks[task_id]["chain_result_cid"] = cid
+        except Exception as exc:
+            print(f"[Mythchain] Result was not committed; P2P submission stopped: {exc}")
+            return False
     
     target_wallet = wallet.metamask_address if hasattr(wallet, 'metamask_address') and wallet.metamask_address else wallet.address
     if not target_wallet:
@@ -639,6 +717,7 @@ print("hello")
             "trajectory_log": cid,
             "acceptance_hash": contract_hash(acceptance),
             "attempt_id": attempt_id or "",
+            "chain_attempt_id": canonical_attempt_id or "",
             "reward": reward,
             "status": "pending_validation",
             "miner_identity": wallet.signing_address or wallet.address,
@@ -667,6 +746,30 @@ print("hello")
         try:
             start_wait = time.time()
             while time.time() - start_wait < 180:
+                if canonical_attempt_id:
+                    try:
+                        from zyra_cmd.mythchain_adapter import MythchainConfig, MythchainTaskAdapter
+                        chain_config = MythchainConfig.from_env("miner")
+                        canonical = MythchainTaskAdapter(chain_config).query_task(task_id)
+                        chain_attempt = canonical.get("attempt_id", canonical.get("attemptId")) if canonical else None
+                        chain_status = str(canonical.get("status", "")).upper() if canonical else ""
+                        if chain_attempt != canonical_attempt_id or not canonical:
+                            network_status = "canonical attempt changed"
+                            print("[Mythchain] Attempt changed during judge voting; no local reward credited.")
+                            break
+                        if chain_status == "APPROVED":
+                            ledger.add_pouw_reward(target_wallet, reward, proof, task_id=task_id)
+                            network_status = "Mythchain APPROVED (local ledger credit only)"
+                            print("[Mythchain] Canonical judge quorum APPROVED the result.\n")
+                            break
+                        if chain_status == "REJECTED":
+                            network_status = "Mythchain REJECTED"
+                            print("[Mythchain] Canonical judge quorum REJECTED the result; no reward credited.\n")
+                            break
+                    except Exception as exc:
+                        print(f"[Mythchain] Waiting for canonical judge state: {exc}")
+                    time.sleep(3)
+                    continue
                 from p2p.votes import tally
                 verdict = tally(p2p_node.signatures.get(traj_hash, {}))
                 if verdict == "FAIL":
@@ -685,14 +788,31 @@ print("hello")
             else:
                 print("\033[93m[System]\033[0m Validation still pending. Waiting for quorum; Ctrl+C stops mining.\n")
                 if task_id:
-                    while tally(p2p_node.signatures.get(traj_hash, {})) is None:
-                        time.sleep(3)
-                    if tally(p2p_node.signatures[traj_hash]) == "PASS" and p2p_node.tasks[task_id]["status"] == "completed":
-                        ledger.add_pouw_reward(target_wallet, reward, proof, task_id=task_id)
-                        network_status = "validated (local reward credited)"
-                    elif tally(p2p_node.signatures[traj_hash]) == "FAIL":
-                        network_status = "rejected"
-                        print(f"[Judge -> Miner] Rejected: {p2p_node.tasks.get(task_id, {}).get('feedback', [])}")
+                    if canonical_attempt_id:
+                        while True:
+                            from zyra_cmd.mythchain_adapter import MythchainConfig, MythchainTaskAdapter
+                            canonical = MythchainTaskAdapter(MythchainConfig.from_env("miner")).query_task(task_id)
+                            if not canonical or canonical.get("attempt_id", canonical.get("attemptId")) != canonical_attempt_id:
+                                network_status = "canonical attempt changed"
+                                break
+                            status = str(canonical.get("status", "")).upper()
+                            if status == "APPROVED":
+                                ledger.add_pouw_reward(target_wallet, reward, proof, task_id=task_id)
+                                network_status = "Mythchain APPROVED (local ledger credit only)"
+                                break
+                            if status == "REJECTED":
+                                network_status = "Mythchain REJECTED"
+                                break
+                            time.sleep(3)
+                    else:
+                        while tally(p2p_node.signatures.get(traj_hash, {})) is None:
+                            time.sleep(3)
+                        if tally(p2p_node.signatures[traj_hash]) == "PASS" and p2p_node.tasks[task_id]["status"] == "completed":
+                            ledger.add_pouw_reward(target_wallet, reward, proof, task_id=task_id)
+                            network_status = "validated (local reward credited)"
+                        elif tally(p2p_node.signatures[traj_hash]) == "FAIL":
+                            network_status = "rejected"
+                            print(f"[Judge -> Miner] Rejected: {p2p_node.tasks.get(task_id, {}).get('feedback', [])}")
         except KeyboardInterrupt:
             print("[Miner] Validation is still pending. No reward credited. Stopping this mining session.")
             raise
@@ -709,7 +829,9 @@ print("hello")
     try:
         with open(audit_filename, 'w', encoding='utf-8') as f:
             f.write(f"# ZYRA Swarm Audit Log\n\n**Task:** {initial_task}\n**Network status:** {network_status}\n"
-                    "**On-chain transaction:** Not submitted by this flow.\n\n## Local delivery verification\n\n")
+                    f"**Mythchain result:** {'Committed' if chain_result_committed else 'Not submitted by this flow'}\n"
+                    "**Mythchain judge votes/settlement:** Votes are submitted by judge nodes; native reward settlement is not implemented.\n\n"
+                    "## Local delivery verification\n\n")
             import json
             f.write("```json\n" + json.dumps(validation_report, indent=2) + "\n```\n\n## Full Trajectory\n\n")
             for entry in full_trajectory_log:
@@ -828,6 +950,17 @@ try:
                         print(f"[Smart Judge] Validation deferred: {reason.get('reason')}")
                         time.sleep(10)
                         continue
+
+                    acceptance = original_task.get("acceptance") or {}
+                    weighted_criteria = acceptance.get("criteria") if isinstance(acceptance, dict) else None
+                    criteria_results = reason.get("criteria_results") if isinstance(reason, dict) else None
+                    if weighted_criteria:
+                        if not isinstance(criteria_results, dict):
+                            validated_trajs.discard(traj_hash)
+                            print("[Smart Judge] Weighted acceptance checks need per-criterion results; "
+                                  "no vote submitted until the evaluator provides them.")
+                            time.sleep(10)
+                            continue
                     
                     # Submit verdict via P2P
                     print(f"[\033[96mAI Validator Node\033[0m] Submitting Verdict to P2P Network...")
@@ -837,11 +970,39 @@ try:
                     
                     from p2p.votes import sign_vote
                     error_text = reason if isinstance(reason, str) else reason.get("reason", str(reason))
-                    vote = sign_vote(wallet, task, "PASS" if is_valid else "FAIL", "" if is_valid else error_text)
+                    vote = sign_vote(wallet, task, "PASS" if is_valid else "FAIL",
+                                     "" if is_valid else error_text, criteria_results=criteria_results)
+                    chain_attempt_id = task.get("chain_attempt_id")
+                    if original_task.get("lease_mode") == "mythchain":
+                        if not chain_attempt_id:
+                            validated_trajs.discard(traj_hash)
+                            print("[Mythchain] Missing canonical attempt ID; judge vote deferred.")
+                            time.sleep(5)
+                            continue
+                        try:
+                            from zyra_cmd.mythchain_adapter import MythchainConfig, MythchainTaskAdapter
+                            chain_state = MythchainTaskAdapter(MythchainConfig.from_env("judge")).vote_task(
+                                task["task_id"], chain_attempt_id,
+                                "PASS" if is_valid else "FAIL",
+                                "" if is_valid else error_text,
+                                acceptance_hash=expected_hash,
+                                result_cid=task["trajectory_log"],
+                                criteria_results=criteria_results if weighted_criteria else None,
+                                criteria=weighted_criteria)
+                            chain_status = str(chain_state.get("status", "")).upper()
+                            print(f"[Mythchain] Judge vote committed. Canonical status: {chain_status}.")
+                        except Exception as exc:
+                            validated_trajs.discard(traj_hash)
+                            print(f"[Mythchain] Judge vote not committed; P2P verdict deferred: {exc}")
+                            time.sleep(5)
+                            continue
                     if p2p_node.add_signature(vote):
                         count = len(p2p_node.signatures[traj_hash])
-                        print(f"[Judge -> Miner] {'PASS' if is_valid else 'FAIL'} vote sent ({count}/2). "
-                              f"{'Waiting for second judge.' if count < 2 else 'Quorum evaluated.'} "
+                        required = 3 if weighted_criteria else 2
+                        waiting = ("Waiting for per-criterion majority; a third judge may be needed."
+                                   if weighted_criteria else "Waiting for second judge.")
+                        print(f"[Judge -> Miner] {'PASS' if is_valid else 'FAIL'} vote sent ({count}/{required}). "
+                              f"{waiting if count < required else 'Quorum evaluated.'} "
                               f"{error_text if not is_valid else ''}\n")
                     else:
                         print("[Judge] Vote was not accepted; check task/trajectory identity and wallet keys.")
@@ -1417,9 +1578,21 @@ os.system("start cmd /k zyra")
                         import asyncio
                         from p2p.protocol import MessageType, create_message
                         from ai.execution.contract import parse_submission, contract_hash
-                        task_prompt, acceptance = parse_submission(task_prompt)
+                        print("[Acceptance] Menganalisis prompt dan menyiapkan checks executable...")
+                        task_prompt, acceptance = parse_submission(task_prompt, criterion_generator=llm)
+                        print(f"[Acceptance] Sistem menyiapkan {len(acceptance.get('criteria', []))} checks "
+                              "otomatis dari prompt sebelum task diklaim.")
+                        for criterion in acceptance.get("criteria", []):
+                            print(f"  - {criterion['description']} (bobot {criterion['weight']}"
+                                  f"{' / wajib lulus' if criterion['hard_gate'] else ''})")
                         
                         task_id = str(uuid.uuid4())
+                        acceptance_hash = contract_hash(acceptance)
+                        chain_required = os.environ.get("ZYRA_MYTHCHAIN_MODE", "off").lower() == "required"
+                        if chain_required:
+                            from zyra_cmd.mythchain_adapter import MythchainConfig, MythchainTaskAdapter
+                            MythchainTaskAdapter(MythchainConfig.from_env("client")).register_task(
+                                task_id, acceptance_hash, criteria=acceptance.get("criteria"))
                         task_payload = {
                             "task_id": task_id,
                             "prompt": task_prompt,
@@ -1427,7 +1600,8 @@ os.system("start cmd /k zyra")
                             "status": "pending",
                             "client": wallet.metamask_address or wallet.address,
                             "acceptance": acceptance,
-                            "acceptance_hash": contract_hash(acceptance)
+                            "acceptance_hash": acceptance_hash,
+                            "lease_mode": "mythchain" if chain_required else "p2p-advisory"
                         }
                         
                         # Persist before broadcasting; keep local output paths off the network.
@@ -1540,7 +1714,9 @@ os.system("start cmd /k zyra")
                         while True:
                             p2p_node.expire_task_leases()
                             miner_identity = wallet.signing_address or wallet.address
-                            claimed = get_pending_miner_task(p2p_node.tasks, preferred_task_id, miner_identity)
+                            claimed = get_pending_miner_task(
+                                p2p_node.tasks, preferred_task_id, miner_identity,
+                                canonical_mode=os.environ.get("ZYRA_MYTHCHAIN_MODE", "off").lower() == "required")
                             preferred_task_id = None
                             if claimed is None:
                                 time.sleep(5)
@@ -1549,6 +1725,26 @@ os.system("start cmd /k zyra")
                             task_id, found_task = claimed
                             prompt = found_task.get("prompt")
                             reward = found_task.get("reward", 2.5)
+
+                            canonical_attempt_id = None
+                            chain_required = (found_task.get("lease_mode") == "mythchain"
+                                              or os.environ.get("ZYRA_MYTHCHAIN_MODE", "off").lower() == "required")
+                            if chain_required:
+                                try:
+                                    chain_config, canonical_lease = claim_mythchain_task(
+                                        task_id, found_task.get("acceptance_hash", ""),
+                                        criteria=(found_task.get("acceptance") or {}).get("criteria"))
+                                except Exception as exc:
+                                    print(f"[Mythchain] Canonical claim unavailable; not starting task: {exc}")
+                                    time.sleep(5)
+                                    continue
+                                if canonical_lease is None:
+                                    print(f"[Mythchain] Another miner owns task {task_id}; continuing to poll.")
+                                    time.sleep(5)
+                                    continue
+                                canonical_attempt_id = canonical_lease.get(
+                                    "attempt_id", canonical_lease.get("attemptId"))
+                                print(f"[Mythchain] Canonical lease confirmed: attempt {canonical_attempt_id}")
 
                             lease = p2p_node.claim_task(task_id, wallet)
                             if lease is None:
@@ -1565,7 +1761,7 @@ os.system("start cmd /k zyra")
 
                             print(f"\n\033[92m[P2P Mempool]\033[0m Found Task! Reward: {reward} ZYRA")
                             print(f"Task ID: \033[96m{task_id}\033[0m")
-                            delivered = run_automode(llm, prompt, history, wallet, ledger, llm.model_name, auto_yes=True, planner_model=args.planner_model, coder_model=args.coder_model, task_id=task_id, attempt_id=lease["lease_id"])
+                            delivered = run_automode(llm, prompt, history, wallet, ledger, llm.model_name, auto_yes=True, planner_model=args.planner_model, coder_model=args.coder_model, task_id=task_id, attempt_id=lease["lease_id"], canonical_attempt_id=canonical_attempt_id)
                             if delivered is False and p2p_node.tasks.get(task_id, {}).get("status") in ("mining", "pending"):
                                 print(f"[Miner] Task {task_id} is not submitted yet. Retrying it before polling other tasks.")
                                 preferred_task_id = task_id

@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: zyra-network
-Version: 2.1.55
+Version: 2.1.60
 Summary: A powerful, self-organizing decentralized AI network client.
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
@@ -87,7 +87,8 @@ When the CLI is reopened:
   and result CID are received from peers.
 - Failed downloads are retried while the CLI is running. Successfully saved results
   are not downloaded again, and existing result folders are not overwritten.
-- `/tasks` shows the full local task history, destinations, and latest download errors.
+- `/tasks` shows the full local task history, destinations, latest download errors,
+  and weighted acceptance reports received from judges.
 
 Recovery requires a peer that still knows the task and an online node serving its
 workspace. Closing the client stops local monitoring/downloads until it is reopened.
@@ -98,11 +99,11 @@ saved task history cannot be reconstructed from local history automatically.
 
 The `/judge` command signs PASS or FAIL votes using ECDSA/secp256k1. Votes bind
 the task ID, trajectory hash, workspace CID, acceptance hash, verdict and reason.
-Peers check the signature and judge address and count **two different judge
-addresses** before marking a task completed or sending failure feedback to a
-miner. The miner waits for the quorum before moving to the next task; its local
-ledger only records a reward once per task after approval. A failed quorum
-returns structured reasons so the same miner can retry that task.
+Peers check the signature and judge address. Legacy tasks without weighted
+criteria keep the two-distinct-address PASS/FAIL quorum. Weighted tasks sign each
+Judge's per-criterion results; the canonical score uses a **2-of-3 majority per
+criterion**. A 1-1 disagreement waits for the third Judge. The local miner ledger
+is not final on-chain settlement.
 
 Run two independent judge nodes for end-to-end testing. Judges need a wallet
 created with `ecdsa` installed; older simulated wallets without a real 128-hex
@@ -118,6 +119,54 @@ verify the seeded file and verify the complete reconstructed download against
 that digest before making it available to the judge or client. Invalid chunks,
 oversized chunks, and artifacts larger than 256 MiB are rejected. Legacy opaque
 IDs remain readable for compatibility but carry no content-integrity guarantee.
+
+## Weighted Acceptance Criteria (local implementation)
+
+`/submit <prompt>` automatically drafts weighted acceptance criteria from the
+Client prompt using the Client's local model when available. ZYRA prints the
+generated rubric before registration; it is fixed into the acceptance hash before
+Miner claim. If no local model is available, ZYRA creates a conservative executable
+runtime rubric. To supply a carefully customized contract instead, use
+`/submit --spec "acceptance.json" <prompt>`.
+
+Each criterion has a unique lowercase `id`, client-readable `description`, positive
+integer `weight`, `hard_gate`, and machine-executable `check`. Example criteria for
+a `flask-web` contract:
+
+```json
+{
+  "criteria": [
+    {
+      "id": "health-endpoint",
+      "description": "Health endpoint returns HTTP 200",
+      "weight": 70,
+      "hard_gate": true,
+      "check": {"type": "http", "path": "/health", "status": 200}
+    },
+    {
+      "id": "status-visible",
+      "description": "Dashboard shows service status",
+      "weight": 30,
+      "hard_gate": false,
+      "check": {"type": "browser_contains", "text": "Online"}
+    }
+  ]
+}
+```
+
+Supported check types are `application_runs`, `stdout_contains` (Python), `http`,
+`browser_contains`, and `browser_fetch` (web). Judges execute the checks in the
+isolated Docker runtime and attach evidence to every PASS/FAIL result. The weighted
+score is the passing weight divided by total weight; a failed hard gate fails the
+task regardless of score. The score is an acceptance score, not a calibrated
+probability of success.
+
+For Mythchain tasks, registration commits the weighted rubric; each Cosmos Judge
+vote includes its per-criterion result JSON. The keeper recomputes the 2-of-3
+criterion majority and canonical weighted score. The weighted CLI integration is
+included in ZYRA v2.1.60. Mythchain validators must run the matching updated binary;
+installing the Python package does not upgrade or start chain validators. Reward
+transfers and token settlement remain unimplemented.
 
 ## Signed Task Leases (v2.1.54+)
 

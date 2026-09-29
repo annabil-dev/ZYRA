@@ -9,7 +9,7 @@ import uuid
 import socket
 
 from p2p.protocol import MessageType, create_message, parse_message
-from p2p.votes import QUORUM, tally, verify_vote
+from p2p.votes import QUORUM, tally, tally_criteria_votes, verify_vote
 from p2p.content import content_cid, is_sha256_cid, verify_content_cid
 from p2p.leases import CLAIM_SETTLE_SECONDS, create_lease, lease_order, verify_lease
 
@@ -223,13 +223,19 @@ class P2PNode:
                 if payload.get("status") == "completed":
                     return
                 logging.info(f"Received NEW_TASK: {task_id}")
-                self.tasks[task_id] = payload
+                task_data = dict(payload)
+                task_data.pop("acceptance_score_report", None)
+                task_data.pop("canonical_criteria_results", None)
+                self.tasks[task_id] = task_data
                 self._notify_task_updated(self.tasks[task_id])
                 await self.broadcast(raw_msg_str, exclude=websocket)
                 
         elif msg_type == MessageType.TASK_UPDATED:
             task_id = payload.get("task_id")
             payload = dict(payload)
+            # Score reports are reconstructed only from verified judge signatures.
+            payload.pop("acceptance_score_report", None)
+            payload.pop("canonical_criteria_results", None)
             existing = self.tasks.get(task_id, {})
             # A peer cannot announce completion without validated votes.
             if payload.get("status") == "completed" and existing.get("status") != "completed":
@@ -240,6 +246,8 @@ class P2PNode:
                 payload.pop("result_cid", None)
             if existing.get("acceptance_hash") and payload.get("acceptance_hash") != existing["acceptance_hash"]:
                 payload.pop("acceptance_hash", None)
+                payload.pop("acceptance", None)
+            elif existing.get("acceptance") and payload.get("acceptance") != existing["acceptance"]:
                 payload.pop("acceptance", None)
             # Lease ownership changes only through a cryptographically signed TASK_CLAIM.
             if payload.get("lease") != existing.get("lease"):
@@ -323,6 +331,9 @@ class P2PNode:
                 if task_id in self.tasks and self.tasks[task_id].get("status") == "completed":
                     continue
                 data = dict(task_data)
+                # Rebuild weighted verdict data by replaying signed votes below.
+                data.pop("acceptance_score_report", None)
+                data.pop("canonical_criteria_results", None)
                 # Status, lease and attempt are reconstructed from signed claims/votes below.
                 if data.get("status") in ("completed", "mining", "validating"):
                     data["status"] = "pending"
@@ -337,6 +348,8 @@ class P2PNode:
                         data["attempt_id"] = existing.get("attempt_id")
                 if existing.get("acceptance_hash") and data.get("acceptance_hash") != existing["acceptance_hash"]:
                     data.pop("acceptance_hash", None)
+                    data.pop("acceptance", None)
+                elif existing.get("acceptance") and data.get("acceptance") != existing["acceptance"]:
                     data.pop("acceptance", None)
                 self.tasks.setdefault(task_id, {}).update(data)
                 self._notify_task_updated(self.tasks[task_id])
@@ -584,12 +597,27 @@ class P2PNode:
             return False
         if not verify_vote(vote, trajectory, task):
             return False
+        acceptance = task.get("acceptance") or {}
+        criteria = acceptance.get("criteria") if isinstance(acceptance, dict) else None
+        if criteria and vote["trajectory_hash"] in self._finalized_trajectories:
+            return False
         votes = self.signatures.setdefault(vote["trajectory_hash"], {})
         judge = vote["judge_wallet"]
         if judge in votes:  # A judge gets only one vote, even after changing their mind.
             return False
+        if criteria and len(votes) >= 3:
+            return False
         votes[judge] = vote
-        decision = tally(votes)
+        criteria_result = None
+        if criteria:
+            criteria_result = tally_criteria_votes(votes, criteria)
+            if criteria_result["status"] == "PENDING":
+                return True
+            decision = "PASS" if criteria_result["status"] == "PASSED" else "FAIL"
+            task["acceptance_score_report"] = criteria_result
+            task["canonical_criteria_results"] = criteria_result["canonical_results"]
+        else:
+            decision = tally(votes)
         if decision and vote["trajectory_hash"] not in self._finalized_trajectories:
             self._finalized_trajectories.add(vote["trajectory_hash"])
             if decision == "PASS":
@@ -601,6 +629,12 @@ class P2PNode:
                 trajectory["status"] = "rejected"
                 task["feedback"] = [{"judge": v["judge_wallet"], "reason": v["reason"]}
                                     for v in votes.values() if v["verdict"] == "FAIL"]
+                if criteria_result:
+                    task["feedback"].extend(
+                        {"criterion_id": item["id"], "reason": item["evidence"],
+                         "hard_gate": item["hard_gate"], "weight": item["weight"]}
+                        for item in criteria_result["failed_criteria"]
+                    )
                 task["prompt"] = task.get("original_prompt", task.get("prompt", ""))
                 task.setdefault("original_prompt", task["prompt"])
                 task["prompt"] += "\n\n[JUDGE FEEDBACK]\n" + "\n".join(

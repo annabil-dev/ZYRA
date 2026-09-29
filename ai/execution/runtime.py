@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 
 from .contract import RUNTIME, contract_hash, deliverable_files, validate_contract, validate_deliverables
+from .scoring import score_acceptance
 
 ASSETS = Path(__file__).resolve().parent
 _build_lock = threading.Lock()
@@ -22,7 +23,7 @@ class RuntimeUnavailable(RuntimeError):
 
 def image_name():
     digest = hashlib.sha256()
-    for name in ("Dockerfile", "runtime-requirements.txt", "contract.py", "runner.py"):
+    for name in ("Dockerfile", "runtime-requirements.txt", "contract.py", "runner.py", "scoring.py"):
         digest.update((ASSETS / name).read_bytes())
     return "zyra-python-runtime:" + digest.hexdigest()[:16]
 
@@ -80,6 +81,47 @@ def validate_workspace(workspace, acceptance):
         validate_deliverables(workspace, contract)
         image = ensure_runtime()
         report["image"] = image
+        if contract.get("criteria"):
+            with tempfile.TemporaryDirectory(prefix="zyra_criteria_") as directory:
+                root = Path(directory) / "criteria"
+                root.mkdir()
+                for name in deliverable_files(workspace):
+                    target = root / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(Path(workspace) / name, target)
+                config_dir = Path(directory) / "contract"
+                config_dir.mkdir()
+                (config_dir / "acceptance.json").write_text(json.dumps(contract), encoding="utf-8")
+                result = run_container(root, image, ["python", "-I", "/opt/zyra/runner.py", "criteria",
+                                                     "/zyra-contract/acceptance.json"], contract_dir=config_dir)
+                if result.returncode in (125, 126, 127):
+                    raise RuntimeUnavailable(f"Container could not execute the judge: {result.stderr[-2000:]}")
+                entries = [line[len("ZYRA_RUNTIME_REPORT="):]
+                           for line in result.stdout.splitlines()
+                           if line.startswith("ZYRA_RUNTIME_REPORT=")]
+                details = json.loads(entries[-1]) if entries else {
+                    "ok": False, "error": "Criteria runner produced no report", "unavailable": True,
+                }
+                report["stages"].append({"stage": "criteria", **details})
+                if details.get("unavailable"):
+                    raise RuntimeUnavailable(details.get("error", "Judge criteria runtime unavailable"))
+                if result.returncode != 0 or not details.get("ok"):
+                    report.update(reason=details.get("error", "Criteria checks could not be evaluated"),
+                                  stdout=result.stdout[-4000:], stderr=result.stderr[-4000:])
+                    return False, report
+                criteria_results = details.get("details", {}).get("criteria_results")
+                score = score_acceptance(contract["criteria"], criteria_results)
+                report.update(
+                    criteria_results=criteria_results,
+                    acceptance_score=score,
+                    client_report_markdown=score["client_report_markdown"],
+                    delivery_ready=True,
+                )
+                if score["status"] == "PASSED":
+                    report.update(status="PASSED", reason="Weighted acceptance criteria passed.", retry=False)
+                    return True, report
+                report.update(status="FAILED", reason="Weighted acceptance score did not meet the task pass policy.", retry=True)
+                return False, report
         with tempfile.TemporaryDirectory(prefix="zyra_verify_") as directory:
             base = Path(directory)
             config_dir = base / "contract"

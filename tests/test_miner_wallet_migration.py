@@ -70,3 +70,10 @@ def test_miner_task_picker_respects_live_lease_and_recovers_expired_lease(tmp_pa
     expired_at = lease["expires_at"] + 1
     assert get_pending_miner_task(tasks, miner_identity=other.signing_address, now=expired_at) == ("lease-task", task)
     assert time.time() < expired_at
+
+
+def test_chain_mode_does_not_let_advisory_p2p_lease_hide_task():
+    task = {"task_id": "chain-task", "status": "mining", "lease_mode": "mythchain",
+            "lease": {"miner_identity": "another-p2p-miner"}, "attempt_id": "p2p-attempt"}
+    tasks = {"chain-task": task}
+    assert get_pending_miner_task(tasks, miner_identity="this-miner", canonical_mode=True) == ("chain-task", task)

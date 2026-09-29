@@ -4,5 +4,5 @@ COPY runtime-requirements.txt /opt/zyra/runtime-requirements.txt
 RUN pip install --no-cache-dir -r /opt/zyra/runtime-requirements.txt \
     && python -m playwright install --with-deps chromium \
     && chmod -R a+rX /ms-playwright
-COPY contract.py runner.py /opt/zyra/
+COPY contract.py runner.py scoring.py /opt/zyra/
 WORKDIR /app

@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import json
 import zipfile
 from pathlib import Path
 
@@ -48,6 +49,26 @@ def test_invalid_output_keeps_previous_preference(tmp_path):
         state.set_output_dir('""')
     assert state.get_output_dir() == output
     assert existing_file.read_text(encoding="utf-8") == "keep"
+
+
+def test_client_persists_and_displays_weighted_acceptance_report(tmp_path):
+    state = ClientState(tmp_path / "state")
+    state.add_task({"task_id": "weighted-task", "status": "pending", "prompt": "Build feature"})
+    report = {
+        "status": "FAILED",
+        "criteria_score_percent": 70,
+        "client_report_markdown": "### Remaining failures and risks\n- Export is missing",
+    }
+    state.update_from_network({"task_id": "weighted-task", "status": "pending",
+                               "acceptance_score_report": report})
+
+    restored = ClientState(tmp_path / "state")
+    payload = json.loads(restored.get_task("weighted-task")["payload"])
+    assert payload["acceptance_score_report"] == report
+
+    messages = []
+    ClientTaskMonitor(restored, P2PNode(), messages.append).show_tasks()
+    assert any("Export is missing" in message for message in messages)
 
 
 async def wait_until(predicate):
