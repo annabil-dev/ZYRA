@@ -93,7 +93,7 @@ that digest before making it available to the judge or client. Invalid chunks,
 oversized chunks, and artifacts larger than 256 MiB are rejected. Legacy opaque
 IDs remain readable for compatibility but carry no content-integrity guarantee.
 
-## Weighted Acceptance Criteria (local implementation)
+## Weighted Acceptance Criteria
 
 `/submit <prompt>` automatically drafts weighted acceptance criteria from the
 Client prompt using the Client's local model when available. ZYRA prints the
@@ -140,9 +140,11 @@ probability of success.
 For Mythchain tasks, registration commits the weighted rubric; each Cosmos Judge
 vote includes its per-criterion result JSON. The keeper recomputes the 2-of-3
 criterion majority and canonical weighted score. The weighted CLI integration is
-included in ZYRA v2.1.61. Mythchain validators must run the matching updated binary;
-installing the Python package does not upgrade or start chain validators. Reward
-transfers and token settlement remain unimplemented.
+included in ZYRA v2.1.62. Mythchain validators must run the matching updated binary;
+installing the Python package does not upgrade or start chain validators. Required-
+chain miners use P2P for task discovery but let Mythchain decide every claim, even
+when an older relay payload lacks the lease-mode marker. Reward transfers and token
+settlement remain unimplemented.
 
 ## Isolating multiple local nodes on one Windows account
 

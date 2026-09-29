@@ -79,12 +79,14 @@ def test_chain_mode_does_not_let_advisory_p2p_lease_hide_task():
     assert get_pending_miner_task(tasks, miner_identity="this-miner", canonical_mode=True) == ("chain-task", task)
 
 
-def test_required_chain_mode_skips_old_unregistered_advisory_tasks():
+def test_required_chain_mode_discovers_candidates_and_skips_claim_failures():
     advisory = {"task_id": "old-task", "status": "pending", "lease_mode": "p2p-advisory"}
-    canonical = {"task_id": "chain-task", "status": "pending", "lease_mode": "mythchain"}
+    canonical = {"task_id": "chain-task", "status": "pending", "acceptance_hash": "hash"}
     tasks = {"old-task": advisory, "chain-task": canonical}
 
-    assert get_pending_miner_task(tasks, canonical_mode=True) == ("chain-task", canonical)
-    assert get_pending_miner_task(tasks, "old-task", canonical_mode=True) == ("chain-task", canonical)
+    # The mode field can be missing from a relay payload; chain claim is the authority.
+    assert get_pending_miner_task(tasks, canonical_mode=True) == ("old-task", advisory)
+    assert get_pending_miner_task(tasks, excluded_task_ids={"old-task"},
+                                  canonical_mode=True) == ("chain-task", canonical)
     assert get_pending_miner_task(tasks, canonical_mode=True,
-                                  excluded_task_ids={"chain-task"}) is None
+                                  excluded_task_ids={"old-task", "chain-task"}) is None

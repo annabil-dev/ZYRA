@@ -61,10 +61,10 @@ def get_pending_miner_task(tasks, preferred_task_id=None, miner_identity=None, n
         if task_id in excluded_task_ids:
             return False
         if canonical_mode:
-            # A required-chain miner must ignore old/advisory P2P tasks; only a
-            # Client task explicitly registered for Mythchain can be claimed.
-            return (task.get("lease_mode") == "mythchain"
-                    and task.get("status") in ("pending", "mining"))
+            # P2P relays may carry task payloads created by older nodes that do
+            # not preserve lease_mode. Treat P2P as discovery only; the canonical
+            # chain claim below decides whether this candidate is usable.
+            return task.get("status") in ("pending", "mining")
         if task.get("lease_mode") == "mythchain":
             return task.get("status") in ("pending", "mining")
         lease = task.get("lease")
