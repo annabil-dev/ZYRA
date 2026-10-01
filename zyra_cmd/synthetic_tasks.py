@@ -1,9 +1,4 @@
-"""Reviewed synthetic task catalog, preview tools, and in-process task feeder.
-
-The feeder runs only while a Client CLI session is open. It has a per-run task cap,
-randomized inter-arrival times, and publishes through the Client callback supplied
-by the CLI. It is not a daemon or an independent scheduler service.
-"""
+"""Reviewed synthetic task catalog and local-only preview tools."""
 
 from __future__ import annotations
 
@@ -11,16 +6,12 @@ import argparse
 import hashlib
 import json
 import random
-import threading
 from dataclasses import dataclass
-from typing import Callable
 
 from ai.execution.contract import RUNTIME, contract_hash, validate_contract
 
 CATALOG_VERSION = "synthetic-catalog-v2"
 MAX_CATALOG_TASKS = 24
-DEFAULT_LIVE_TASKS = 12
-MAX_LIVE_TASKS = MAX_CATALOG_TASKS
 REWARD_CATEGORY_ORDER = ("light", "medium", "heavy", "very_heavy")
 REWARD_DIFFICULTY = {
     "light": "easy",
@@ -233,10 +224,10 @@ def generate_synthetic_tasks(*, seed: int, count: int = 1, category: str | None 
     return [_task_spec(template, seed, index) for index, template in enumerate(templates[:count])]
 
 
-def randomized_task_specs(*, seed: int | None = None, count: int = DEFAULT_LIVE_TASKS):
+def randomized_task_specs(*, seed: int | None = None, count: int = MAX_CATALOG_TASKS):
     """Yield a random mix; each four-task block covers all four reward categories."""
-    if not 1 <= count <= MAX_LIVE_TASKS:
-        raise ValueError(f"count must be between 1 and {MAX_LIVE_TASKS}")
+    if not 1 <= count <= MAX_CATALOG_TASKS:
+        raise ValueError(f"count must be between 1 and {MAX_CATALOG_TASKS}")
     rng = random.Random(seed)
     by_category = {category: [item for item in _CATALOG if item.reward_category == category]
                    for category in REWARD_CATEGORY_ORDER}
@@ -257,72 +248,6 @@ def randomized_task_specs(*, seed: int | None = None, count: int = DEFAULT_LIVE_
             yielded += 1
             if yielded >= count:
                 break
-
-
-class SyntheticTaskFeeder:
-    """Publish a bounded randomized task stream from the active Client session."""
-
-    def __init__(self, submit: Callable[[dict], object], *, count=DEFAULT_LIVE_TASKS,
-                 min_interval=30, max_interval=90, seed=None, on_event=None):
-        if not 1 <= count <= MAX_LIVE_TASKS:
-            raise ValueError(f"task count must be between 1 and {MAX_LIVE_TASKS}")
-        if min_interval < 0 or max_interval < min_interval or max_interval > 3600:
-            raise ValueError("intervals must satisfy 0 <= min <= max <= 3600 seconds")
-        self.submit = submit
-        self.count = count
-        self.min_interval = min_interval
-        self.max_interval = max_interval
-        self.seed = seed if seed is not None else random.SystemRandom().getrandbits(64)
-        self.on_event = on_event or (lambda _message: None)
-        self._stop_event = threading.Event()
-        self._thread = None
-        self.submitted = 0
-        self.last_error = None
-
-    @property
-    def running(self):
-        return self._thread is not None and self._thread.is_alive()
-
-    def start(self):
-        if self.running:
-            raise RuntimeError("synthetic task feeder is already running")
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run, name="zyra-synthetic-task-feeder", daemon=True)
-        self._thread.start()
-        return self
-
-    def stop(self, timeout=5):
-        self._stop_event.set()
-        if self._thread is not None:
-            self._thread.join(timeout=timeout)
-        return not self.running
-
-    def _run(self):
-        rng = random.Random(self.seed)
-        try:
-            for spec in randomized_task_specs(seed=self.seed, count=self.count):
-                if self._stop_event.is_set():
-                    break
-                try:
-                    task = self.submit(spec)
-                except Exception as exc:
-                    self.last_error = str(exc)
-                    self.on_event(f"Synthetic feeder berhenti setelah gagal submit: {exc}")
-                    return
-                self.submitted += 1
-                task_id = task.get("task_id", "?") if isinstance(task, dict) else "?"
-                self.on_event(
-                    f"Synthetic task {self.submitted}/{self.count}: "
-                    f"{spec['template_id']} [{spec['reward_category']}] -> {task_id}"
-                )
-                if self.submitted < self.count:
-                    delay = rng.uniform(self.min_interval, self.max_interval)
-                    self.on_event(f"Task berikutnya dikirim sekitar {delay:.0f} detik lagi.")
-                    if self._stop_event.wait(delay):
-                        break
-        finally:
-            self.on_event(f"Synthetic feeder selesai: {self.submitted}/{self.count} task dikirim.")
-
 
 def main(argv=None):
     parser = argparse.ArgumentParser(

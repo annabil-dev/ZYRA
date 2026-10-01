@@ -13,6 +13,7 @@ import secrets
 import subprocess
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 
 class MythchainError(RuntimeError):
@@ -106,6 +107,7 @@ class MythchainConfig:
     keyring_backend: str = "os"
     home: str = ""
     wsl_distro: str = ""
+    keyring_password: str = ""
 
     @classmethod
     def from_env(cls, role="miner", environ=None):
@@ -129,11 +131,19 @@ class MythchainConfig:
             raise MythchainError("Mythchain lease blocks and command timeout must be integers") from exc
         if not 1 <= lease_blocks <= 10_000 or timeout < 1:
             raise MythchainError("MYTHCHAIN_LEASE_BLOCKS must be 1..10000 and timeout must be positive")
+        keyring_password = env.get("MYTHCHAIN_KEYRING_PASSWORD", "")
+        password_file = env.get("MYTHCHAIN_KEYRING_PASSWORD_FILE", "")
+        if password_file:
+            try:
+                keyring_password = Path(password_file).read_text(encoding="utf-8").rstrip("\r\n")
+            except OSError as exc:
+                raise MythchainError("Could not read MYTHCHAIN_KEYRING_PASSWORD_FILE") from exc
         return cls(**required, lease_blocks=lease_blocks, timeout=timeout,
                    fees=env.get("MYTHCHAIN_TX_FEES", ""),
                    keyring_backend=env.get("MYTHCHAIN_KEYRING_BACKEND", "os"),
                    home=env.get(f"MYTHCHAIN_{role}_HOME", env.get("MYTHCHAIN_HOME", "")),
-                   wsl_distro=env.get("MYTHCHAIN_WSL_DISTRO", ""))
+                   wsl_distro=env.get("MYTHCHAIN_WSL_DISTRO", ""),
+                   keyring_password=keyring_password)
 
 
 class MythchainTaskAdapter:
@@ -159,8 +169,11 @@ class MythchainTaskAdapter:
                 command = [os.environ.get("WSL_BINARY", "wsl.exe"), "-d", self.config.wsl_distro,
                            "--", *command]
             try:
-                result = self.runner(command, capture_output=True, text=True, timeout=self.config.timeout,
-                                     check=False)
+                run_options = {"capture_output": True, "text": True,
+                               "timeout": self.config.timeout, "check": False}
+                if tx and self.config.keyring_password:
+                    run_options["input"] = self.config.keyring_password + "\n"
+                result = self.runner(command, **run_options)
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise MythchainUnavailable(f"Mythchain CLI/RPC unavailable: {exc}") from exc
             if result.returncode != 0:

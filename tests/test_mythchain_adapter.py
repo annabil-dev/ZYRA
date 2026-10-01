@@ -18,6 +18,33 @@ def result(payload, code=0, stderr=""):
     return SimpleNamespace(returncode=code, stdout=json.dumps(payload), stderr=stderr)
 
 
+def test_file_keyring_password_is_sent_on_stdin_not_in_cli_args(tmp_path, monkeypatch):
+    password_file = tmp_path / "keyring-password"
+    password_file.write_text("service-only-passphrase\n", encoding="utf-8")
+    monkeypatch.setenv("MYTHCHAIN_BINARY", "mythprotocold")
+    monkeypatch.setenv("MYTHCHAIN_NODE", "tcp://127.0.0.1:26657")
+    monkeypatch.setenv("MYTHCHAIN_CHAIN_ID", "myth-mainnet-1")
+    monkeypatch.setenv("MYTHCHAIN_CLIENT_KEY", "synthetic-client")
+    monkeypatch.setenv("MYTHCHAIN_CLIENT_ADDRESS", "myth1service")
+    monkeypatch.setenv("MYTHCHAIN_KEYRING_BACKEND", "file")
+    monkeypatch.setenv("MYTHCHAIN_KEYRING_PASSWORD_FILE", str(password_file))
+
+    config_with_secret = MythchainConfig.from_env("client")
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append((command, kwargs))
+        return result({"txhash": "signed-and-broadcast"})
+
+    MythchainTaskAdapter(config_with_secret, runner=runner)._run(
+        ["tx", "mythprotocol", "register-task"], tx=True
+    )
+
+    command, kwargs = calls[0]
+    assert "service-only-passphrase" not in " ".join(command)
+    assert kwargs["input"] == "service-only-passphrase\n"
+
+
 def test_two_competing_miners_only_canonical_owner_gets_lease():
     task = {"task_id": "job", "acceptance_hash": "a" * 64, "status": "OPEN"}
     canonical = {"task_id": "job", "acceptance_hash": "a" * 64,

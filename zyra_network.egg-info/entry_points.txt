@@ -1,2 +1,3 @@
 [console_scripts]
 zyra = zyra_cmd.zyra_cli:main
+zyra-syntheticd = zyra_cmd.synthetic_producer:main

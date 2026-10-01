@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import os
+import json
 import uuid
 
 from ai.execution.contract import contract_hash, validate_contract
 from zyra_cmd.mythchain_adapter import TASK_CATEGORY_BASE_REWARDS, reward_category_for_task
 
 
-def dispatch_client_task(prompt, acceptance, wallet, client_state, p2p_node, *, metadata=None):
+def dispatch_client_task(prompt, acceptance, wallet, client_state, p2p_node, *, metadata=None, task_id=None):
     """Register, persist, and P2P-broadcast one task through the Client path."""
     metadata = dict(metadata or {})
     acceptance = validate_contract(acceptance)
-    task_id = str(uuid.uuid4())
+    task_id = task_id or str(uuid.uuid4())
     acceptance_hash = contract_hash(acceptance)
     difficulty = metadata.get("difficulty", acceptance.get("difficulty"))
     profile = metadata.get("profile", acceptance.get("profile"))
@@ -51,6 +52,15 @@ def dispatch_client_task(prompt, acceptance, wallet, client_state, p2p_node, *, 
         if metadata.get(key) is not None:
             task_payload[key] = metadata[key]
 
-    saved_task = client_state.add_task(task_payload)
+    saved_task = client_state.get_task(task_id)
+    if saved_task is not None:
+        try:
+            saved_payload = json.loads(saved_task["payload"])
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Existing local task record is malformed") from exc
+        if saved_payload.get("acceptance_hash") != acceptance_hash:
+            raise RuntimeError("Task ID already exists locally with a different acceptance hash")
+    else:
+        saved_task = client_state.add_task(task_payload)
     p2p_node.add_task(task_payload)
     return task_payload, saved_task

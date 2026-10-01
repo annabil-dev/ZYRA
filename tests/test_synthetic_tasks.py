@@ -6,7 +6,6 @@ import pytest
 from ai.execution.contract import contract_hash, validate_contract
 from zyra_cmd.synthetic_tasks import (
     MAX_CATALOG_TASKS,
-    SyntheticTaskFeeder,
     catalog,
     generate_synthetic_tasks,
     main,
@@ -55,26 +54,6 @@ def test_live_sequence_has_randomized_order_and_covers_each_category():
         assert {spec["reward_category"] for spec in specs[start:start + 4]} == {
             "light", "medium", "heavy", "very_heavy"
         }
-
-
-def test_live_feeder_submits_bounded_tasks_and_calls_status_callback():
-    submitted = []
-    events = []
-    feeder = SyntheticTaskFeeder(
-        lambda spec: submitted.append(spec) or {"task_id": f"task-{len(submitted)}"},
-        count=4,
-        min_interval=0,
-        max_interval=0,
-        seed=8,
-        on_event=events.append,
-    ).start()
-    feeder._thread.join(timeout=3)
-
-    assert not feeder.running
-    assert feeder.submitted == 4
-    assert len(submitted) == 4
-    assert all(spec["status"] == "preview_only_not_submitted" for spec in submitted)
-    assert any("task-4" in event for event in events)
 
 
 def test_synthetic_generator_rejects_invalid_category_and_count():

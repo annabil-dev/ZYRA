@@ -73,10 +73,10 @@ saved task history cannot be reconstructed from local history automatically.
 The `/judge` command signs PASS or FAIL votes using ECDSA/secp256k1. Votes bind
 the task ID, trajectory hash, workspace CID, acceptance hash, verdict and reason.
 Peers check the signature and judge address. Legacy tasks without weighted
-criteria keep the two-distinct-address PASS/FAIL quorum. Weighted tasks sign each
-Judge's per-criterion results; the canonical score uses a **2-of-3 majority per
-criterion**. A 1-1 disagreement waits for the third Judge. The local miner ledger
-is not final on-chain settlement.
+criteria keep the two-distinct-address PASS/FAIL quorum. Weighted local P2P votes
+use a 2-of-3 majority per criterion. Mythchain L1 has its own canonical quorum:
+v0.1.2 requires three aligned votes from up to four Judges. A local P2P approval is
+not a substitute for an L1 approval or on-chain settlement.
 
 Run two independent judge nodes for end-to-end testing. Judges need a wallet
 created with `ecdsa` installed; older simulated wallets without a real 128-hex
@@ -138,13 +138,12 @@ task regardless of score. The score is an acceptance score, not a calibrated
 probability of success.
 
 For Mythchain tasks, registration commits the weighted rubric; each Cosmos Judge
-vote includes its per-criterion result JSON. The keeper recomputes the 2-of-3
-criterion majority and canonical weighted score. The weighted CLI integration is
-included in ZYRA v2.1.62. Mythchain validators must run the matching updated binary;
-installing the Python package does not upgrade or start chain validators. Required-
-chain miners use P2P for task discovery but let Mythchain decide every claim, even
-when an older relay payload lacks the lease-mode marker. Reward transfers and token
-settlement remain unimplemented.
+vote includes its per-criterion result JSON. The weighted CLI adapter first shipped
+in v2.1.62; v2.1.65 adds the unattended synthetic producer. Mythchain validators
+must run the matching updated binary; installing the Python package does not upgrade
+or start chain validators. Required-chain Miners use P2P for discovery but let
+Mythchain decide every claim. Local P2P voting and canonical L1 Judge quorum are
+separate; query Mythchain for final task status.
 
 ## Miner/Judge Docker runtime and task dependencies
 
@@ -179,37 +178,78 @@ cache and can be pruned with Docker Buildx cache-prune tools when disk space is 
 Local Ollama Planner/Coder inference remains outside this task container; this
 runtime controls generated application/test dependencies and execution.
 
-## Synthetic task feeder
+## Autonomous synthetic task producer
 
-The interactive Client has an opt-in, session-local feeder backed by a reviewed
-catalog of 24 synthetic task types: six each in Light, Medium, Heavy, and Very Heavy.
-It randomly rotates through all four reward categories, shuffles task types, and
-waits a random interval between submissions. It runs only while this Client process
-is open; no separate scheduler service is required. Each run is capped at 24 tasks.
+`zyra-syntheticd` (in `zyra-network==2.1.65`) is a headless producer sidecar intended
+to run beside a Mythchain validator host. Systemd starts it automatically; no Client
+command or separate cron scheduler is needed. The daemon uses a reviewed catalog of
+24 task types (six per reward category), registers tasks on the configured L1, then
+broadcasts them to P2P. It waits a random 5–30 minutes between submissions, persists
+its outbox and UTC daily counter in SQLite, resumes queued work after restart, and
+caps successful registrations at 50 per UTC day. Run only one producer instance for
+the network.
 
-Start a default run (12 tasks, random 30–90 second gaps), inspect it, or stop early:
-
-```text
-/synthetic start
-/synthetic status
-/synthetic stop
-```
-
-Override the count and interval for a run:
+Example service environment for Ardecserver:
 
 ```text
-/synthetic start 24 20 60
+ZYRA_MYTHCHAIN_MODE=required
+ZYRA_DATA_DIR=/var/lib/zyra-synthetic
+ZYRA_SYNTHETIC_MAX_PER_DAY=50
+ZYRA_SYNTHETIC_MIN_INTERVAL_SECONDS=300
+ZYRA_SYNTHETIC_MAX_INTERVAL_SECONDS=1800
+MYTHCHAIN_BINARY=/usr/bin/mythprotocold
+MYTHCHAIN_CHAIN_ID=myth-mainnet-1
+MYTHCHAIN_NODE=tcp://127.0.0.1:26657
+MYTHCHAIN_KEYRING_BACKEND=file
+MYTHCHAIN_CLIENT_KEY=synthetic-client
+MYTHCHAIN_CLIENT_ADDRESS=<SYNTHETIC_CLIENT_MYTH_ADDRESS>
+MYTHCHAIN_CLIENT_HOME=/var/lib/zyra-synthetic/keyring
+MYTHCHAIN_TX_FEES=1000umyth
 ```
 
-Every live synthetic task goes through the normal Client path: acceptance criteria,
-reward category, optional Mythchain registration, local task history, then P2P
-broadcast. In `ZYRA_MYTHCHAIN_MODE=required`, it uses the configured L1 and each task
-is a permanent on-chain record and consumes MYTH transaction fees. Use a small count
-for the first live run. On Mythchain v0.1.2, canonical weighted approval needs three
-matching Judge votes out of up to four independent Judges. With PoUW emissions disabled
-and no funded reward pool, do not expect new ZYRA emissions/payouts.
+Install `zyra-network==2.1.65` in a Linux virtual environment. Run `zyra-syntheticd`
+under systemd with a dedicated Cosmos service account and keyring; do not use the
+validator consensus key. Supply a file-keyring passphrase through an encrypted
+systemd credential, and fund the service account for MYTH fees.
+Example unit at `/etc/systemd/system/zyra-syntheticd.service`:
 
-Preview the catalog without sending anything:
+```ini
+[Unit]
+Description=ZYRA Mythchain synthetic task producer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=annabilardec
+WorkingDirectory=/var/lib/zyra-synthetic
+EnvironmentFile=/etc/zyra/synthetic.env
+LoadCredentialEncrypted=keyring-password:/etc/credstore.encrypted/zyra-keyring-password
+Environment=MYTHCHAIN_KEYRING_PASSWORD_FILE=%d/keyring-password
+ExecStart=/opt/zyra-venv/bin/zyra-syntheticd
+Restart=on-failure
+RestartSec=30
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Give the service user ownership of `/var/lib/zyra-synthetic`, then enable and monitor it:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now zyra-syntheticd
+sudo journalctl -u zyra-syntheticd -f
+```
+
+Tasks already registered remain pending in Mythchain/P2P until a Miner claims them.
+Task prompts are permanent public-chain data and registrations consume MYTH fees.
+The genesis `enable_pouw_emissions=false` keeps emissions disabled; task approval does
+not itself cause ZYRA emission. L1 weighted approval requires three aligned votes
+from up to four independent Judge accounts.
+
+Preview the reviewed catalog without submitting anything:
 
 ```powershell
 python -m zyra_cmd.synthetic_tasks --list
@@ -218,8 +258,6 @@ python -m zyra_cmd.synthetic_tasks --seed 42 --category heavy
 ```
 
 The preview CLI is local-only and never registers, broadcasts, or rewards tasks.
-Live synthetic scheduling is a bounded loop inside the Client session, not this
-preview command.
 
 ## Isolating multiple local nodes on one Windows account
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zyra-network"
-version = "2.1.64"
+version = "2.1.65"
 description = "A powerful, self-organizing decentralized AI network client."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -47,6 +47,7 @@ where = ["."]
 include = ["app*", "ai*", "zyra_cmd*", "p2p*"]
 [project.scripts]
 zyra = "zyra_cmd.zyra_cli:main"
+zyra-syntheticd = "zyra_cmd.synthetic_producer:main"
 
 [tool.setuptools.package-data]
 "ai.execution" = ["Dockerfile", "runtime-requirements.txt"]

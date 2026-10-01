@@ -1,3 +1,5 @@
+import json
+
 from ai.execution.contract import make_contract
 from zyra_cmd.task_dispatch import dispatch_client_task
 
@@ -10,6 +12,12 @@ class FakeWallet:
 class FakeClientState:
     def __init__(self):
         self.tasks = []
+
+    def get_task(self, task_id):
+        for task in self.tasks:
+            if task["task_id"] == task_id:
+                return {"payload": json.dumps(task), "task_id": task_id}
+        return None
 
     def add_task(self, task):
         self.tasks.append(task)
@@ -85,3 +93,23 @@ def test_dispatch_registers_on_required_chain_before_p2p_broadcast(monkeypatch):
 
     assert events == ["chain-register", "persist", "broadcast"]
     assert task["lease_mode"] == "mythchain"
+
+
+def test_dispatch_retries_same_task_id_without_duplicate_local_history(monkeypatch):
+    monkeypatch.setenv("ZYRA_MYTHCHAIN_MODE", "off")
+    state, p2p = FakeClientState(), FakeP2PNode()
+    wallet = FakeWallet()
+    acceptance = make_contract("retry safe local task")
+
+    first, _ = dispatch_client_task(
+        "Retry safe task", acceptance, wallet, state, p2p,
+        task_id="stable-synthetic-id", metadata={"origin": "synthetic", "profile": "python"},
+    )
+    second, _ = dispatch_client_task(
+        "Retry safe task", acceptance, wallet, state, p2p,
+        task_id="stable-synthetic-id", metadata={"origin": "synthetic", "profile": "python"},
+    )
+
+    assert first["task_id"] == second["task_id"] == "stable-synthetic-id"
+    assert len(state.tasks) == 1
+    assert len(p2p.tasks) == 2

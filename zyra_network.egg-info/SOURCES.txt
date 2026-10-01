@@ -87,6 +87,7 @@ tests/test_pretraining_safety.py
 tests/test_rms_norm.py
 tests/test_rope.py
 tests/test_signed_quorum.py
+tests/test_synthetic_producer.py
 tests/test_synthetic_tasks.py
 tests/test_task_dispatch.py
 tests/test_task_leases.py
@@ -105,6 +106,7 @@ zyra_cmd/installer.py
 zyra_cmd/mns_v0.json
 zyra_cmd/mns_v0.py
 zyra_cmd/mythchain_adapter.py
+zyra_cmd/synthetic_producer.py
 zyra_cmd/synthetic_tasks.py
 zyra_cmd/task_dispatch.py
 zyra_cmd/web3_bridge.py
