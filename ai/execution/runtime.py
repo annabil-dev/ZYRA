@@ -51,6 +51,14 @@ def ensure_runtime():
     with _build_lock:
         try:
             subprocess.run(["docker", "info"], capture_output=True, text=True, check=True, timeout=20)
+            buildx = subprocess.run(
+                ["docker", "buildx", "version"], capture_output=True, text=True, check=False, timeout=20
+            )
+            if buildx.returncode != 0:
+                raise RuntimeUnavailable(
+                    "Docker Buildx is required for the pinned task runtime. Install the Docker Buildx plugin "
+                    "(Ubuntu Docker CE package: docker-buildx-plugin), then verify with `docker buildx version`."
+                )
             existing = subprocess.run(["docker", "image", "inspect", image], capture_output=True, timeout=20)
             if existing.returncode == 0:
                 details = _docker_image_info(image)

@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: zyra-network
-Version: 2.1.63
+Version: 2.1.64
 Summary: A powerful, self-organizing decentralized AI network client.
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
@@ -178,7 +178,11 @@ settlement remain unimplemented.
 Miner task commands and independent Judge checks run in Docker; they are never
 executed directly on the host. Install and start Docker Desktop/Engine, then use
 `/runtime` in ZYRA to prepare the pinned Python/Flask/Chromium base image. The first
-base-image build needs internet access.
+base-image build needs internet access and the Docker Buildx plugin. On Ubuntu, install
+`docker-buildx-plugin` from the Docker package repository and verify it with
+`docker buildx version`; `/runtime` reports this requirement before attempting a build.
+Keep the Client/Miner/Judge processes on the same P2P network, and use independent data
+directories and Cosmos service keys for each role.
 
 Task dependencies are declared as exact `package==version` pins in the generated
 `requirements.txt`. ZYRA prepares a task-specific image in a resource-limited Docker
@@ -202,21 +206,47 @@ cache and can be pruned with Docker Buildx cache-prune tools when disk space is 
 Local Ollama Planner/Coder inference remains outside this task container; this
 runtime controls generated application/test dependencies and execution.
 
-## Synthetic task catalog preview
+## Synthetic task feeder
 
-ZYRA has an opt-in **preview-only** catalog for repeatable synthetic task ideas:
+The interactive Client has an opt-in, session-local feeder backed by a reviewed
+catalog of 24 synthetic task types: six each in Light, Medium, Heavy, and Very Heavy.
+It randomly rotates through all four reward categories, shuffles task types, and
+waits a random interval between submissions. It runs only while this Client process
+is open; no separate scheduler service is required. Each run is capped at 24 tasks.
+
+Start a default run (12 tasks, random 30–90 second gaps), inspect it, or stop early:
+
+```text
+/synthetic start
+/synthetic status
+/synthetic stop
+```
+
+Override the count and interval for a run:
+
+```text
+/synthetic start 24 20 60
+```
+
+Every live synthetic task goes through the normal Client path: acceptance criteria,
+reward category, optional Mythchain registration, local task history, then P2P
+broadcast. In `ZYRA_MYTHCHAIN_MODE=required`, it uses the configured L1 and each task
+is a permanent on-chain record and consumes MYTH transaction fees. Use a small count
+for the first live run. On Mythchain v0.1.2, canonical weighted approval needs three
+matching Judge votes out of up to four independent Judges. With PoUW emissions disabled
+and no funded reward pool, do not expect new ZYRA emissions/payouts.
+
+Preview the catalog without sending anything:
 
 ```powershell
 python -m zyra_cmd.synthetic_tasks --list
-python -m zyra_cmd.synthetic_tasks --seed 42 --count 3
-python -m zyra_cmd.synthetic_tasks --seed 42 --category flask-web
+python -m zyra_cmd.synthetic_tasks --seed 42 --count 24
+python -m zyra_cmd.synthetic_tasks --seed 42 --category heavy
 ```
 
-The seed makes selection reproducible. Preview output includes the task prompt,
-category/difficulty, executable acceptance contract, and acceptance hash. It does
-not register a task, broadcast through P2P, start a Miner, or issue a reward. A
-background scheduler and on-chain synthetic-task origin/budget rules are not part
-of this preview command.
+The preview CLI is local-only and never registers, broadcasts, or rewards tasks.
+Live synthetic scheduling is a bounded loop inside the Client session, not this
+preview command.
 
 ## Isolating multiple local nodes on one Windows account
 

@@ -298,6 +298,19 @@ def test_weighted_runtime_returns_partial_score_report_for_judge(tmp_path, monke
     assert "api-extra" in report["client_report_markdown"]
 
 
+def test_ensure_runtime_reports_missing_docker_buildx_plugin(monkeypatch):
+    def fake_run(command, **kwargs):
+        if command == ["docker", "info"]:
+            return SimpleNamespace(returncode=0, stdout="docker info", stderr="")
+        if command == ["docker", "buildx", "version"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="docker: 'buildx' is not a docker command")
+        raise AssertionError(f"unexpected docker command: {command}")
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+    with pytest.raises(runtime.RuntimeUnavailable, match="docker-buildx-plugin"):
+        runtime.ensure_runtime()
+
+
 @pytest.fixture
 def docker_runtime():
     if os.environ.get("ZYRA_TEST_DOCKER") != "1":

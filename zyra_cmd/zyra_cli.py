@@ -973,9 +973,13 @@ try:
         try:
             if judge_address(wallet.signing_public_key or wallet.public_key) != (wallet.signing_address or wallet.address):
                 raise ValueError("Local signing identity does not match its public key")
+        except Exception as exc:
+            print(f"[Smart Judge] Judge signing identity is invalid: {exc}. A real ECDSA wallet is required.")
+            return
+        try:
             ensure_runtime()
         except Exception as exc:
-            print(f"[Smart Judge] {exc}. A real ECDSA wallet is required for judge votes.")
+            print(f"[Smart Judge] Docker runtime unavailable: {exc}")
             return
         
         # --- SYBIL RESISTANCE (STAKING CHECK) ---
@@ -1134,6 +1138,7 @@ try:
                 ('/runtime', 'Siapkan Docker runtime miner/judge (Flask + Chromium)'),
                 ('/output', 'Lihat/atur folder hasil task (/output <folder>)'),
                 ('/tasks', 'Lihat status task client dan lokasi hasil tersimpan'),
+                ('/synthetic', 'Jalankan feeder task simulasi acak pada sesi Client'),
                 ('/deploy', 'Auto-deploy Smart Contract ke Localhost'),
                 ('/logs', 'Lihat audit log dari tugas sebelumnya'),
                 ('/clear', 'Bersihkan layar terminal dan memori percakapan'),
@@ -1264,6 +1269,27 @@ def main():
 
         client_monitor.show_tasks(startup=True)
         client_monitor.start()
+
+        synthetic_feeder = None
+
+        def publish_synthetic_spec(spec):
+            from zyra_cmd.task_dispatch import dispatch_client_task
+
+            task, _saved = dispatch_client_task(
+                spec["prompt"], spec["acceptance"], wallet, client_state, p2p_node,
+                metadata={
+                    "origin": "synthetic",
+                    "difficulty": spec["difficulty"],
+                    "profile": spec["runtime_profile"],
+                    "synthetic_template_id": spec["template_id"],
+                    "synthetic_catalog_version": spec["catalog_version"],
+                    "synthetic_seed": spec["seed"],
+                },
+            )
+            return task
+
+        def synthetic_event(message):
+            print(f"[Synthetic] {message}", flush=True)
         
         while True:
             try:
@@ -1277,6 +1303,8 @@ def main():
                     
                 cmd = user_input.lower()
                 if cmd in ['/exit', '/quit', 'exit', 'quit']:
+                    if synthetic_feeder is not None:
+                        synthetic_feeder.stop()
                     client_monitor.stop()
                     print("\033[93mGoodbye! Keep mining ZYRA.\033[0m")
                     break
@@ -1292,6 +1320,7 @@ def main():
                     print("  \033[93m/search\033[0m  - Live web search (e.g., /search latest news)")
                     print("  \033[93m/automode\033[0m- Autonomous Coding Agent (e.g., /automode create a react app)")
                     print("  \033[93m/submit\033[0m  - Submit task to ZYRA Mempool for Miners (e.g., /submit make a python script)")
+                    print("  \033[93m/synthetic start [count] [min-sec] [max-sec]\033[0m - Auto-kirim task simulasi acak")
                     print("  \033[93m/engine\033[0m  - Install/start Ollama and set up a local model")
                     print("  \033[93m/runtime\033[0m - Prepare the shared Docker runtime for mining/judging")
                     print("  \033[93m/submit --web <task>\033[0m - Require a runnable web app and browser checks")
@@ -1314,6 +1343,52 @@ def main():
                         print(f"[Runtime] Ready: {ensure_runtime()}")
                     except Exception as exc:
                         print(f"[Runtime] {exc}")
+                    continue
+                elif cmd == '/synthetic' or cmd.startswith('/synthetic '):
+                    from zyra_cmd.synthetic_tasks import SyntheticTaskFeeder, DEFAULT_LIVE_TASKS
+
+                    parts = user_input.split()
+                    action = parts[1].lower() if len(parts) > 1 else 'status'
+                    if action == 'start':
+                        if synthetic_feeder is not None and synthetic_feeder.running:
+                            print("[Synthetic] Feeder sudah aktif; gunakan /synthetic status atau /synthetic stop.")
+                            continue
+                        try:
+                            count = int(parts[2]) if len(parts) > 2 else DEFAULT_LIVE_TASKS
+                            min_seconds = int(parts[3]) if len(parts) > 3 else 30
+                            max_seconds = int(parts[4]) if len(parts) > 4 else 90
+                            if len(parts) > 5:
+                                raise ValueError("Terlalu banyak argumen")
+                            if min_seconds < 10:
+                                raise ValueError("Jeda minimal 10 detik untuk menghindari spam transaksi")
+                            synthetic_feeder = SyntheticTaskFeeder(
+                                publish_synthetic_spec,
+                                count=count,
+                                min_interval=min_seconds,
+                                max_interval=max_seconds,
+                                on_event=synthetic_event,
+                            ).start()
+                            print(
+                                f"[Synthetic] Feeder aktif: {count} task dari 24 jenis, "
+                                f"jeda acak {min_seconds}-{max_seconds} detik. "
+                                "Hentikan dengan /synthetic stop."
+                            )
+                        except (ValueError, RuntimeError) as exc:
+                            print(f"[Synthetic] Tidak bisa mulai: {exc}")
+                    elif action == 'stop':
+                        if synthetic_feeder is None or not synthetic_feeder.running:
+                            print("[Synthetic] Feeder tidak sedang berjalan.")
+                        else:
+                            synthetic_feeder.stop()
+                            print(f"[Synthetic] Dihentikan setelah {synthetic_feeder.submitted} task.")
+                    elif action == 'status':
+                        if synthetic_feeder is None:
+                            print("[Synthetic] Feeder mati. Jalankan /synthetic start [count] [min-sec] [max-sec].")
+                        else:
+                            state = 'aktif' if synthetic_feeder.running else 'selesai/berhenti'
+                            print(f"[Synthetic] {state}; terkirim {synthetic_feeder.submitted}/{synthetic_feeder.count}.")
+                    else:
+                        print("Gunakan /synthetic start [count] [min-sec] [max-sec], /synthetic status, atau /synthetic stop.")
                     continue
                 elif cmd == '/engine':
                     try:
@@ -1674,10 +1749,8 @@ os.system("start cmd /k zyra")
                     
                     print(f"\033[93m[Network]\033[0m Mengirim tugas ke P2P Mempool...")
                     try:
-                        import uuid
-                        import asyncio
-                        from p2p.protocol import MessageType, create_message
-                        from ai.execution.contract import parse_submission, contract_hash
+                        from ai.execution.contract import parse_submission
+                        from zyra_cmd.task_dispatch import dispatch_client_task
                         print("[Acceptance] Menganalisis prompt dan menyiapkan checks executable...")
                         task_prompt, acceptance = parse_submission(task_prompt, criterion_generator=llm)
                         print(f"[Acceptance] Sistem menyiapkan {len(acceptance.get('criteria', []))} checks "
@@ -1686,37 +1759,20 @@ os.system("start cmd /k zyra")
                             print(f"  - {criterion['description']} (bobot {criterion['weight']}"
                                   f"{' / wajib lulus' if criterion['hard_gate'] else ''})")
                         
-                        task_id = str(uuid.uuid4())
-                        acceptance_hash = contract_hash(acceptance)
-                        from zyra_cmd.mythchain_adapter import TASK_CATEGORY_BASE_REWARDS, reward_category_for_task
-                        task_category = reward_category_for_task(
-                            difficulty=acceptance.get("difficulty"), profile=acceptance.get("profile"))
-                        base_reward = TASK_CATEGORY_BASE_REWARDS[task_category]
-                        chain_required = os.environ.get("ZYRA_MYTHCHAIN_MODE", "off").lower() == "required"
-                        if chain_required:
-                            from zyra_cmd.mythchain_adapter import MythchainConfig, MythchainTaskAdapter
-                            MythchainTaskAdapter(MythchainConfig.from_env("client")).register_task(
-                                task_id, acceptance_hash, criteria=acceptance.get("criteria"),
-                                difficulty=acceptance.get("difficulty"), profile=acceptance.get("profile"))
-                        task_payload = {
-                            "task_id": task_id,
-                            "prompt": task_prompt,
-                            "reward": base_reward,
-                            "base_reward": base_reward,
-                            "reward_category": task_category,
-                            "status": "pending",
-                            "client": wallet.metamask_address or wallet.address,
-                            "acceptance": acceptance,
-                            "acceptance_hash": acceptance_hash,
-                            "lease_mode": "mythchain" if chain_required else "p2p-advisory"
-                        }
-                        
-                        # Persist before broadcasting; keep local output paths off the network.
-                        saved_task = client_state.add_task(task_payload)
-                        p2p_node.add_task(task_payload)
+                        task_payload, saved_task = dispatch_client_task(
+                            task_prompt,
+                            acceptance,
+                            wallet,
+                            client_state,
+                            p2p_node,
+                            metadata={
+                                "difficulty": acceptance.get("difficulty"),
+                                "profile": acceptance.get("profile"),
+                            },
+                        )
                         
                         print(f"\033[92m[Success]\033[0m Tugas berhasil dilempar ke P2P Mempool!")
-                        print(f"Task ID: \033[96m{task_id}\033[0m")
+                        print(f"Task ID: \033[96m{task_payload['task_id']}\033[0m")
                         print(f"Runtime profile: {acceptance['profile']} | entrypoint: {acceptance['entrypoint']}")
                         print(f"Folder hasil: {saved_task['output_dir']}")
                         print("Sekarang tinggal tunggu para Miner di jaringan untuk mengerjakan tugas ini.\n")
@@ -1961,6 +2017,8 @@ os.system("start cmd /k zyra")
             except KeyboardInterrupt:
                 print("\n\033[93mInterrupted. Type 'exit' to quit.\033[0m")
             except EOFError:
+                if synthetic_feeder is not None:
+                    synthetic_feeder.stop()
                 client_monitor.stop()
                 break
 

@@ -88,6 +88,7 @@ tests/test_rms_norm.py
 tests/test_rope.py
 tests/test_signed_quorum.py
 tests/test_synthetic_tasks.py
+tests/test_task_dispatch.py
 tests/test_task_leases.py
 tests/test_tokenizer.py
 tests/test_tokenizer_roundtrip.py
@@ -105,6 +106,7 @@ zyra_cmd/mns_v0.json
 zyra_cmd/mns_v0.py
 zyra_cmd/mythchain_adapter.py
 zyra_cmd/synthetic_tasks.py
+zyra_cmd/task_dispatch.py
 zyra_cmd/web3_bridge.py
 zyra_cmd/zyra_cli.py
 zyra_network.egg-info/PKG-INFO
