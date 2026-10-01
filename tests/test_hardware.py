@@ -1,3 +1,8 @@
+import sys
+from pathlib import Path
+
+# These tests cover the archived desktop app, not the active ZYRA CLI package.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "archives" / "legacy_app"))
 from app.core.hardware import HardwareDetector
 
 def test_hardware_detector():

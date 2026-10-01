@@ -15,6 +15,7 @@ class MessageType:
     TASK_UPDATED = "TASK_UPDATED"
     TRAJECTORY_UPDATED = "TRAJECTORY_UPDATED"
     TASK_CLAIM = "TASK_CLAIM"
+    TASK_RELEASE = "TASK_RELEASE"
 def create_message(msg_type, payload=None):
     return json.dumps({
         "type": msg_type,

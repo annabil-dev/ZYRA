@@ -69,11 +69,112 @@ def test_readme_and_each_file_must_be_documented(tmp_path):
     assert not valid and "Setup" in report["reason"]
 
 
-def test_unsupported_dependencies_fail_instead_of_mock_substitutes(tmp_path):
+def test_unsupported_dependencies_fail_instead_of_mock_substitutes(tmp_path, monkeypatch):
     contract = make_web_workspace(tmp_path)
     (tmp_path / "requirements.txt").write_text("Flask==3.1.3\nnonexistent-framework==1.0\n")
+    monkeypatch.setattr(runtime, "ensure_runtime", lambda: "base-image")
+    monkeypatch.setattr(runtime, "_docker_image_info", lambda _image: {
+        "id": "sha256:" + "a" * 64, "os": "linux", "architecture": "amd64",
+        "rootfs_sha256": "b" * 64,
+    })
+
+    def fail_dependency_build(command, **kwargs):
+        if command[1:3] == ["image", "inspect"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="not found")
+        assert command[1] == "build"
+        return SimpleNamespace(returncode=1, stdout="", stderr="No matching distribution found")
+
+    monkeypatch.setattr(runtime.subprocess, "run", fail_dependency_build)
     valid, report = runtime.validate_workspace(tmp_path, contract)
     assert not valid and "Dependency unavailable" in report["reason"]
+
+
+def test_task_requirements_use_base_packages_and_reject_unpinned_dependencies(tmp_path):
+    (tmp_path / "requirements.txt").write_text("Flask==3.1.3\n# comments are okay\n")
+    assert runtime._task_requirements(tmp_path) == ""
+
+    (tmp_path / "requirements.txt").write_text("requests>=2.32\n")
+    with pytest.raises(runtime.RuntimeUnavailable, match="exact package pins"):
+        runtime._task_requirements(tmp_path)
+
+
+def test_delivery_contract_accepts_exact_task_dependency_pins(tmp_path):
+    contract = make_web_workspace(tmp_path)
+    (tmp_path / "requirements.txt").write_text("Flask==3.1.3\nFlask-SQLAlchemy==3.1.1\n")
+
+    validate_deliverables(tmp_path, contract)
+
+
+def test_task_runtime_build_is_cached_and_restricts_build_context(tmp_path, monkeypatch):
+    (tmp_path / "requirements.txt").write_text("requests==2.32.3\n")
+    built = set()
+    build_commands = []
+    monkeypatch.setattr(runtime, "_docker_image_info", lambda _image: {
+        "id": "sha256:" + "a" * 64, "os": "linux", "architecture": "amd64",
+        "rootfs_sha256": "b" * 64,
+    })
+
+    def docker(command, **kwargs):
+        if command[1:3] == ["image", "inspect"]:
+            return SimpleNamespace(returncode=0 if command[3] in built else 1, stdout="", stderr="")
+        if command[1:3] == ["image", "ls"]:
+            return SimpleNamespace(returncode=0, stdout="\n".join(sorted(built)), stderr="")
+        assert command[1] == "build"
+        build_commands.append(command)
+        context = Path(command[-1])
+        assert sorted(path.name for path in context.iterdir()) == ["Dockerfile", "requirements.txt"]
+        dockerfile = (context / "Dockerfile").read_text(encoding="utf-8")
+        assert "--only-binary=:all:" in dockerfile
+        assert "--mount=type=cache" in dockerfile
+        assert "zyra-pip-wheels-v1" in dockerfile
+        assert "FROM base-image" in dockerfile
+        built.add(command[command.index("--tag") + 1])
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(runtime.subprocess, "run", docker)
+    first = runtime.prepare_task_runtime(tmp_path, "base-image")
+    second = runtime.prepare_task_runtime(tmp_path, "base-image")
+
+    assert first == second
+    assert first.startswith("zyra-python-bootstrap:")
+    assert len(build_commands) == 1
+    assert "--network" in build_commands[0]
+    assert "default" in build_commands[0]
+    assert "--resource" in build_commands[0]
+
+
+def test_miner_commands_run_in_prepared_image_with_network_disabled(tmp_path, monkeypatch):
+    prepared = Mock(return_value="task-image")
+    run = Mock(return_value=SimpleNamespace(returncode=0, stdout="ok", stderr=""))
+    monkeypatch.setattr(runtime, "prepare_task_runtime", prepared)
+    monkeypatch.setattr(runtime, "run_container", run)
+
+    result = runtime.execute_miner_command(tmp_path, "python -c 'print(1)'", "base-image")
+
+    assert result.returncode == 0
+    prepared.assert_called_once_with(tmp_path, "base-image")
+    run.assert_called_once_with(tmp_path, "task-image", ["sh", "-c", "python -c 'print(1)'"], timeout=60)
+
+
+def test_judge_validation_uses_the_prepared_task_image(tmp_path, monkeypatch):
+    contract = make_contract("print a value")
+    (tmp_path / "main.py").write_text("print('ok')\n")
+    (tmp_path / "test_suite.py").write_text(
+        "import unittest\nclass Test(unittest.TestCase):\n def test_ok(self): self.assertTrue(True)\n"
+    )
+    document(tmp_path, contract)
+    (tmp_path / "requirements.txt").write_text("requests==2.32.3\n")
+    prepared = Mock(return_value="task-image")
+    run = Mock(return_value=SimpleNamespace(returncode=1, stdout="", stderr="test failed"))
+    monkeypatch.setattr(runtime, "ensure_runtime", Mock(return_value="base-image"))
+    monkeypatch.setattr(runtime, "prepare_task_runtime", prepared)
+    monkeypatch.setattr(runtime, "run_container", run)
+
+    valid, _ = runtime.validate_workspace(tmp_path, contract)
+
+    assert valid is False
+    prepared.assert_called_once_with(tmp_path, "base-image", require_runtime_lock=False)
+    assert run.call_args.args[1] == "task-image"
 
 
 def test_missing_docker_never_executes_workspace_on_host(tmp_path, monkeypatch):
@@ -183,6 +284,7 @@ def test_weighted_runtime_returns_partial_score_report_for_judge(tmp_path, monke
     }
     details = {"ok": True, "stage": "criteria", "details": {"criteria_results": outcomes}}
     monkeypatch.setattr(runtime, "ensure_runtime", lambda: "test-image")
+    monkeypatch.setattr(runtime, "prepare_task_runtime", lambda *args, **kwargs: "test-image")
     monkeypatch.setattr(runtime, "run_container", lambda *args, **kwargs: SimpleNamespace(
         returncode=0, stdout="ZYRA_RUNTIME_REPORT=" + json.dumps(details) + "\n", stderr=""))
 
@@ -273,6 +375,51 @@ def test_script_requires_successful_real_entrypoint(tmp_path, docker_runtime):
     assert not valid and report["stages"][-1]["stage"] == "smoke", report
 
 
+def test_task_dependency_image_installs_wheels_and_executes_offline(tmp_path, docker_runtime):
+    (tmp_path / "requirements.txt").write_text("requests==2.32.3\n")
+    image = runtime.prepare_task_runtime(tmp_path, docker_runtime)
+    result = runtime.run_container(
+        tmp_path, image, ["python", "-c", "import requests; print(requests.__version__)"]
+    )
+
+    assert image.startswith("zyra-python-bootstrap:")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "2.32.3"
+    command = runtime.docker_command(tmp_path, image, "test-task", ["true"])
+    assert command[command.index("--network") + 1] == "none"
+
+
+def test_runtime_lock_is_embedded_and_judge_rebuilds_same_rootfs(tmp_path, docker_runtime):
+    contract = make_contract("calculate a value")
+    (tmp_path / "main.py").write_text("import requests\nprint('ok')\n")
+    (tmp_path / "test_suite.py").write_text(
+        "import unittest\nclass Test(unittest.TestCase):\n"
+        " def test_requests(self): import requests; self.assertEqual(requests.__version__, '2.32.3')\n"
+    )
+    document(tmp_path, contract)
+    (tmp_path / "requirements.txt").write_text("requests==2.32.3\n")
+
+    miner_image = runtime.prepare_task_runtime(tmp_path, docker_runtime)
+    manifest = json.loads((tmp_path / "zyra.json").read_text(encoding="utf-8"))
+    lock = manifest["runtime_environment"]
+    assert lock["schema"] == 1
+    assert len(lock["fingerprint"]) == 64
+    assert {package["name"].lower() for package in lock["packages"]} >= {"requests", "urllib3"}
+    validate_deliverables(tmp_path, contract)
+
+    subprocess.run(["docker", "image", "rm", miner_image], capture_output=True, check=True)
+    judge_image = runtime.prepare_task_runtime(tmp_path, docker_runtime, require_runtime_lock=True)
+    assert judge_image == miner_image
+    judge_info = runtime._docker_image_info(judge_image)
+    assert judge_info["rootfs_sha256"] == lock["task_rootfs_sha256"]
+    assert judge_info["id"] == lock["task_image_id"]
+    result = runtime.run_container(
+        tmp_path, judge_image, ["python", "-c", "import requests; print(requests.__version__)"]
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "2.32.3"
+
+
 def test_false_done_does_not_submit_or_reward(tmp_path, monkeypatch):
     from zyra_cmd import zyra_cli
     contract = make_contract("calculate")
@@ -301,6 +448,43 @@ def test_false_done_does_not_submit_or_reward(tmp_path, monkeypatch):
     node.add_trajectory.assert_not_called()
     node.seed_file.assert_not_called()
     ledger.add_pouw_reward.assert_not_called()
+
+
+def test_coder_cannot_claim_completion_after_a_failed_test_command(tmp_path, monkeypatch):
+    from zyra_cmd import zyra_cli
+
+    contract = make_contract("calculate")
+    node = SimpleNamespace(tasks={"job": {"acceptance": contract,
+                                            "acceptance_hash": contract_hash(contract)}})
+    monkeypatch.setattr(zyra_cli, "p2p_node", node, raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(runtime, "ensure_runtime", lambda: "test-image")
+    monkeypatch.setattr(runtime, "execute_miner_command", lambda *args, **kwargs: SimpleNamespace(
+        returncode=1, stdout="", stderr="ModuleNotFoundError: missing dependency"))
+    validator = Mock(side_effect=AssertionError("A failed coder step must not reach delivery validation"))
+    monkeypatch.setattr(runtime, "validate_workspace", validator)
+    planner_calls = 0
+    coder_calls = 0
+
+    class Generator:
+        def generate(self, **kwargs):
+            nonlocal planner_calls, coder_calls
+            if kwargs["override_model"] == "planner":
+                planner_calls += 1
+                text = "<DELEGATE>Run the tests</DELEGATE>" if planner_calls == 1 else "<ALL_DONE>"
+            else:
+                coder_calls += 1
+                text = "<CMD>python -m unittest discover -v</CMD>" if coder_calls == 1 else "[STEP_COMPLETE]"
+            yield text, text, {}
+
+    wallet = SimpleNamespace(address="Z_MINER", metamask_address=None)
+    ledger = SimpleNamespace(add_pouw_reward=Mock())
+    assert zyra_cli.run_automode(Generator(), "calculate", [], wallet, ledger, "model",
+                                 auto_yes=True, planner_model="planner", coder_model="coder",
+                                 task_id="job") is False
+    validator.assert_not_called()
+    audit = next(tmp_path.joinpath("sandbox_workspace", "_audit").glob("*.jsonl"))
+    assert "coder_completion_rejected_after_command_failure" in audit.read_text(encoding="utf-8")
 
 
 def test_delivery_rejection_is_sent_to_coder_and_inspect_only_step_is_rejected(tmp_path, monkeypatch):

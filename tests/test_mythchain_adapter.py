@@ -76,6 +76,36 @@ def test_claim_does_not_treat_tx_success_as_proof_without_canonical_query():
     assert adapter.claim_task("job", "a" * 64) is None
 
 
+def test_release_task_confirms_canonical_released_state():
+    leased = {"task_id": "job", "acceptance_hash": "a" * 64, "miner_address": "myth1miner",
+              "attempt_id": "b" * 64, "status": "LEASED", "expires_at_height": "500"}
+    released = {**leased, "status": "RELEASED", "expires_at_height": "420"}
+    queries = [leased, released]
+    commands = []
+
+    def runner(command, **kwargs):
+        commands.append(command)
+        if "release-task" in command:
+            return result({"txhash": "release-tx"})
+        return result({"found": True, "lease": queries.pop(0)})
+
+    adapter = MythchainTaskAdapter(config(), runner=runner, sleep=lambda _: None)
+    result_state = adapter.release_task("job", "b" * 64)
+
+    assert result_state["status"] == "RELEASED"
+    tx = next(command for command in commands if "release-task" in command)
+    assert "--task-id" in tx and tx[tx.index("--task-id") + 1] == "job"
+    assert "--attempt-id" in tx and tx[tx.index("--attempt-id") + 1] == "b" * 64
+
+
+def test_release_task_rejects_foreign_or_submitted_attempt():
+    lease = {"task_id": "job", "acceptance_hash": "a" * 64, "miner_address": "myth1other",
+             "attempt_id": "b" * 64, "status": "LEASED", "expires_at_height": "500"}
+    adapter = MythchainTaskAdapter(config(), runner=lambda *args, **kwargs: result({"found": True, "lease": lease}))
+    with pytest.raises(MythchainError, match="does not own"):
+        adapter.release_task("job", "b" * 64)
+
+
 def test_acceptance_hash_mismatch_is_hard_failure():
     response = {"found": True, "lease": {"task_id": "job", "acceptance_hash": "c" * 64,
                                              "status": "OPEN"}}
@@ -125,11 +155,61 @@ def test_role_specific_node_and_home_override_shared_defaults():
     assert config.home == "/miner/home"
 
 
+def test_task_reward_category_maps_difficulty_and_profile_deterministically():
+    from zyra_cmd.mythchain_adapter import reward_category_for_task
+
+    assert reward_category_for_task(difficulty="easy", profile="flask-web") == "light"
+    assert reward_category_for_task(difficulty="hard") == "heavy"
+    assert reward_category_for_task(difficulty="very_hard") == "very_heavy"
+    assert reward_category_for_task(profile="python") == "light"
+    assert reward_category_for_task(profile="flask-web") == "medium"
+    with pytest.raises(MythchainError, match="Unsupported task difficulty"):
+        reward_category_for_task(difficulty="impossible", profile="python")
+
+
+@pytest.mark.parametrize("rejection", [
+    result({}, code=1, stderr="gas fee required: gasless bootstrap is used or complete"),
+    result({"code": 1, "raw_log": "gas fee required: gasless bootstrap is complete"}),
+])
+def test_transactions_retry_with_uzyra_fees_only_after_gasless_rejection(rejection):
+    commands = []
+
+    def runner(command, **kwargs):
+        commands.append(command)
+        if "--fees" in command:
+            return result({"txhash": "paid-tx"})
+        return rejection
+
+    adapter = MythchainTaskAdapter(
+        MythchainConfig(**{**config().__dict__, "fees": "20uzyra"}), runner=runner)
+    response = adapter._run(["tx", "mythprotocol", "claim-task"], tx=True)
+
+    assert response["txhash"] == "paid-tx"
+    assert len(commands) == 2
+    assert "--fees" not in commands[0]
+    assert commands[1][commands[1].index("--fees") + 1] == "20uzyra"
+
+
+def test_successful_gasless_transaction_does_not_attach_configured_fees():
+    commands = []
+    adapter = MythchainTaskAdapter(
+        MythchainConfig(**{**config().__dict__, "fees": "20uzyra"}),
+        runner=lambda command, **kwargs: (commands.append(command) or result({"txhash": "free-tx"})),
+    )
+
+    response = adapter._run(["tx", "mythprotocol", "claim-task"], tx=True)
+
+    assert response["txhash"] == "free-tx"
+    assert len(commands) == 1
+    assert "--fees" not in commands[0]
+
+
 def test_register_task_commits_weighted_criteria_with_acceptance_hash():
     criteria = [{"id": "runs", "description": "App runs", "weight": 100,
                  "hard_gate": True, "check": {"type": "application_runs"}}]
     chain_criteria = json.dumps(criteria, separators=(",", ":"))
     lease = {"task_id": "weighted", "acceptance_hash": "a" * 64,
+             "task_category": "light",
              "criteria_json": chain_criteria, "status": "OPEN"}
     queries = [None, lease]
     commands = []
@@ -142,12 +222,13 @@ def test_register_task_commits_weighted_criteria_with_acceptance_hash():
         return result({"found": lease is not None, "lease": lease})
 
     adapter = MythchainTaskAdapter(config(), runner=runner, sleep=lambda _: None)
-    registered = adapter.register_task("weighted", "a" * 64, criteria=criteria)
+    registered = adapter.register_task("weighted", "a" * 64, criteria=criteria, profile="python")
 
     assert json.loads(registered["criteria_json"]) == criteria
     tx = next(command for command in commands if "register-task" in command)
     assert "--criteria-json" in tx
     assert json.loads(tx[tx.index("--criteria-json") + 1]) == criteria
+    assert tx[tx.index("--task-category") + 1] == "light"
 
 
 def test_weighted_judge_vote_sends_results_and_confirms_canonical_score():

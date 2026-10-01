@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: zyra-network
-Version: 2.1.62
+Version: 2.1.63
 Summary: A powerful, self-organizing decentralized AI network client.
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
@@ -172,6 +172,51 @@ installing the Python package does not upgrade or start chain validators. Requir
 chain miners use P2P for task discovery but let Mythchain decide every claim, even
 when an older relay payload lacks the lease-mode marker. Reward transfers and token
 settlement remain unimplemented.
+
+## Miner/Judge Docker runtime and task dependencies
+
+Miner task commands and independent Judge checks run in Docker; they are never
+executed directly on the host. Install and start Docker Desktop/Engine, then use
+`/runtime` in ZYRA to prepare the pinned Python/Flask/Chromium base image. The first
+base-image build needs internet access.
+
+Task dependencies are declared as exact `package==version` pins in the generated
+`requirements.txt`. ZYRA prepares a task-specific image in a resource-limited Docker
+Builder using binary wheels and a local BuildKit pip cache. Additional packages may
+need internet access on their first build; repeated builds use the cache. Source
+distributions, direct URLs, editable installs, and unpinned versions are rejected.
+If a wheel cannot be prepared, the task reports the dependency failure instead of
+pretending tests passed.
+
+The task Runner and Judge execute with networking disabled, a read-only container
+root, dropped capabilities, and CPU/memory/process limits. The Builder cache is not
+mounted into the Runner. Miner preparation writes resolved wheel hashes and the
+runtime fingerprint into `zyra.json`; the artifact ZIP carries this lock, and a
+Judge refuses a mismatched base image, platform, runtime fingerprint, OCI image ID,
+or root-filesystem fingerprint. Keep Miner and Judge on the same supported runtime
+platform (`ZYRA_RUNTIME_PLATFORM`, default `linux/amd64`).
+
+Task image tags are cached locally, with a default retention of eight; override via
+`ZYRA_TASK_RUNTIME_CACHE_MAX`. BuildKit's pip cache is a separate Docker Desktop
+cache and can be pruned with Docker Buildx cache-prune tools when disk space is low.
+Local Ollama Planner/Coder inference remains outside this task container; this
+runtime controls generated application/test dependencies and execution.
+
+## Synthetic task catalog preview
+
+ZYRA has an opt-in **preview-only** catalog for repeatable synthetic task ideas:
+
+```powershell
+python -m zyra_cmd.synthetic_tasks --list
+python -m zyra_cmd.synthetic_tasks --seed 42 --count 3
+python -m zyra_cmd.synthetic_tasks --seed 42 --category flask-web
+```
+
+The seed makes selection reproducible. Preview output includes the task prompt,
+category/difficulty, executable acceptance contract, and acceptance hash. It does
+not register a task, broadcast through P2P, start a Miner, or issue a reward. A
+background scheduler and on-chain synthetic-task origin/budget rules are not part
+of this preview command.
 
 ## Isolating multiple local nodes on one Windows account
 

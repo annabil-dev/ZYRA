@@ -2,7 +2,8 @@ import asyncio
 import time
 
 from ai.blockchain.wallet import ZyraWallet
-from p2p.leases import LEASE_SECONDS, create_lease, verify_lease
+from p2p.leases import (LEASE_SECONDS, create_lease, create_lease_release,
+                        verify_lease, verify_lease_release)
 from p2p.network import P2PNode
 from p2p.protocol import MessageType, create_message, parse_message
 from p2p.votes import sign_vote
@@ -38,6 +39,145 @@ def test_signed_claims_converge_to_same_winner_when_nodes_see_same_set(tmp_path)
     loser_identity = second_claim["miner_identity"] if winner_identity == first_claim["miner_identity"] else first_claim["miner_identity"]
     assert get_pending_miner_task(first_node.tasks, miner_identity=winner_identity)[0] == "coding-task"
     assert get_pending_miner_task(second_node.tasks, miner_identity=loser_identity) is None
+    assert get_pending_miner_task(
+        first_node.tasks, miner_identity=winner_identity, canonical_mode=True
+    )[0] == "coding-task"
+    assert get_pending_miner_task(
+        second_node.tasks, miner_identity=loser_identity, canonical_mode=True
+    ) is None
+
+
+def test_miner_skips_nondeliverable_task_for_rest_of_session(tmp_path):
+    from zyra_cmd.zyra_cli import get_pending_miner_task
+
+    owner = ZyraWallet(str(tmp_path / "owner"))
+    task = task_template()
+    lease = create_lease(owner, task)
+    task.update(status="mining", lease=lease, attempt_id=lease["lease_id"])
+    tasks = {task["task_id"]: task}
+
+    # A task that exhausted its Swarm run stays in the P2P pool, but the
+    # current /mine session must not select it again, even as a preferred task.
+    assert get_pending_miner_task(
+        tasks,
+        preferred_task_id="coding-task",
+        miner_identity=owner.signing_address,
+        canonical_mode=True,
+        excluded_task_ids={"coding-task"},
+    ) is None
+
+
+def test_failed_canonical_attempt_releases_chain_before_p2p_claim(tmp_path):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from zyra_cmd.zyra_cli import release_failed_miner_attempt
+
+    calls = []
+    config = SimpleNamespace(address="myth1miner")
+
+    class Adapter:
+        def __init__(self, _config):
+            pass
+
+        def release_task(self, task_id, attempt_id):
+            calls.append(("chain", task_id, attempt_id))
+
+    p2p_node = SimpleNamespace(release_task_claim=Mock(side_effect=lambda *args: calls.append(("p2p", *args[:2])) or True))
+    wallet = SimpleNamespace(signing_address="p2p-miner", address="p2p-miner")
+    result = release_failed_miner_attempt(
+        "coding-task", "p2p-lease", "a" * 64, wallet, p2p_node,
+        config_factory=lambda _role: config, adapter_factory=Adapter,
+    )
+
+    assert result == {"chain_released": True, "p2p_released": True, "error": None}
+    assert calls == [("chain", "coding-task", "a" * 64), ("p2p", "coding-task", "p2p-lease")]
+
+
+def test_failed_canonical_release_keeps_p2p_claim_when_owner_is_still_active():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from zyra_cmd.zyra_cli import release_failed_miner_attempt
+
+    class Adapter:
+        def __init__(self, _config):
+            pass
+
+        def release_task(self, *_args):
+            raise RuntimeError("RPC unavailable")
+
+        def query_task(self, _task_id):
+            return {"miner_address": "myth1miner", "attempt_id": "a" * 64, "status": "LEASED"}
+
+    p2p_node = SimpleNamespace(release_task_claim=Mock(return_value=True))
+    wallet = SimpleNamespace(signing_address="p2p-miner", address="p2p-miner")
+    result = release_failed_miner_attempt(
+        "coding-task", "p2p-lease", "a" * 64, wallet, p2p_node,
+        config_factory=lambda _role: SimpleNamespace(address="myth1miner"), adapter_factory=Adapter,
+    )
+
+    assert result["chain_released"] is False
+    assert result["p2p_released"] is False
+    assert "RPC unavailable" in result["error"]
+    p2p_node.release_task_claim.assert_not_called()
+
+
+def test_signed_lease_release_unblocks_task_and_survives_mempool_sync(tmp_path):
+    owner = ZyraWallet(str(tmp_path / "owner"))
+    next_miner = ZyraWallet(str(tmp_path / "next-miner"))
+    task = task_template()
+    source = P2PNode()
+    source.tasks[task["task_id"]] = dict(task)
+    claim = create_lease(owner, task)
+    assert source.accept_task_claim(claim)
+
+    release = create_lease_release(owner, claim)
+    assert verify_lease_release(release, task, claim)
+    assert source.accept_task_release(release)
+    assert source.tasks[task["task_id"]]["status"] == "pending"
+    assert source.tasks[task["task_id"]].get("lease") is None
+    assert not source.accept_task_claim(claim)
+
+    target = P2PNode()
+    target.tasks[task["task_id"]] = dict(task)
+    sync = create_message(MessageType.MEMPOOL_DATA, {
+        "tasks": source.tasks,
+        "trajectories": {},
+        "signatures": {},
+        "task_claims": source.task_claims,
+        "task_releases": source.task_releases,
+    })
+    asyncio.run(target.handle_message(parse_message(sync), None, sync))
+    assert not target.accept_task_claim(claim)
+    next_claim = create_lease(next_miner, target.tasks[task["task_id"]])
+    assert target.accept_task_claim(next_claim)
+    assert target.tasks[task["task_id"]]["miner"] == next_miner.signing_address
+
+
+def test_node_release_claim_gossips_a_signed_release_message(tmp_path):
+    async def scenario():
+        owner = ZyraWallet(str(tmp_path / "release-owner"))
+        task = task_template()
+        sender = P2PNode()
+        receiver = P2PNode()
+        sender.tasks[task["task_id"]] = dict(task)
+        receiver.tasks[task["task_id"]] = dict(task)
+        claim = create_lease(owner, task)
+        assert sender.accept_task_claim(claim)
+        messages = []
+
+        async def capture(message, exclude=None):
+            messages.append(message)
+
+        sender.broadcast = capture
+        assert sender.release_task_claim(task["task_id"], claim["lease_id"], owner)
+        await asyncio.sleep(0)
+        release_message = messages[-1]
+        assert parse_message(release_message)["type"] == MessageType.TASK_RELEASE
+        await receiver.handle_message(parse_message(release_message), None, release_message)
+        assert receiver.tasks[task["task_id"]]["status"] == "pending"
+        assert receiver.tasks[task["task_id"]].get("lease") is None
+
+    asyncio.run(scenario())
 
 
 def test_claim_signature_tamper_and_wrong_task_are_rejected(tmp_path):

@@ -64,7 +64,12 @@ def get_pending_miner_task(tasks, preferred_task_id=None, miner_identity=None, n
             # P2P relays may carry task payloads created by older nodes that do
             # not preserve lease_mode. Treat P2P as discovery only; the canonical
             # chain claim below decides whether this candidate is usable.
-            return task.get("status") in ("pending", "mining")
+            if task.get("status") not in ("pending", "mining"):
+                return False
+            lease = task.get("lease")
+            if lease and verify_lease(lease, task, now):
+                return lease.get("miner_identity") == miner_identity
+            return True
         if task.get("lease_mode") == "mythchain":
             return task.get("status") in ("pending", "mining")
         lease = task.get("lease")
@@ -82,12 +87,55 @@ def get_pending_miner_task(tasks, preferred_task_id=None, miner_identity=None, n
     return None
 
 
+def is_test_verification_command(command):
+    """Recognize the supported unit-test commands used to clear a coder failure."""
+    command = str(command).lower()
+    return ("pytest" in command or "unittest" in command or "test_suite.py" in command)
+
+
 def claim_mythchain_task(task_id, acceptance_hash, role="miner", config=None, adapter_factory=None, criteria=None):
     """Claim a task through Mythchain and return (config, canonical lease)."""
     from zyra_cmd.mythchain_adapter import MythchainConfig, MythchainTaskAdapter
     chain_config = config or MythchainConfig.from_env(role)
     adapter = (adapter_factory or MythchainTaskAdapter)(chain_config)
     return chain_config, adapter.claim_task(task_id, acceptance_hash, criteria=criteria)
+
+
+def release_failed_miner_attempt(task_id, p2p_lease_id, canonical_attempt_id,
+                                 wallet, p2p_node, config_factory=None, adapter_factory=None):
+    """Release unused ownership safely; never revoke P2P if chain ownership is uncertain."""
+    result = {"chain_released": canonical_attempt_id is None, "p2p_released": False, "error": None}
+    can_release_p2p = canonical_attempt_id is None
+    adapter = None
+    chain_config = None
+    if canonical_attempt_id:
+        try:
+            from zyra_cmd.mythchain_adapter import MythchainConfig, MythchainTaskAdapter
+            chain_config = (config_factory or MythchainConfig.from_env)("miner")
+            adapter = (adapter_factory or MythchainTaskAdapter)(chain_config)
+            adapter.release_task(task_id, canonical_attempt_id)
+            result["chain_released"] = True
+            can_release_p2p = True
+        except Exception as exc:
+            result["error"] = str(exc)
+            if adapter is not None and chain_config is not None:
+                try:
+                    current = adapter.query_task(task_id) or {}
+                    owner = current.get("miner_address", current.get("minerAddress", ""))
+                    attempt = current.get("attempt_id", current.get("attemptId", ""))
+                    status = str(current.get("status", "")).upper()
+                    can_release_p2p = (
+                        owner != chain_config.address or attempt != canonical_attempt_id
+                        or status in {"RELEASED", "APPROVED", "REJECTED"}
+                    )
+                except Exception:
+                    can_release_p2p = False
+    if can_release_p2p:
+        try:
+            result["p2p_released"] = bool(p2p_node.release_task_claim(task_id, p2p_lease_id, wallet))
+        except Exception as exc:
+            result["error"] = result["error"] or str(exc)
+    return result
 
 
 def get_zyra_data_dir(environ=None):
@@ -261,6 +309,13 @@ def run_automode(llm, initial_task: str, history: list, wallet: ZyraWallet, ledg
         print(f"[Runtime] Cannot start task: {exc}")
         return False
     delivery_rules = delivery_instructions(acceptance)
+    dependency_rules = """RUNTIME DEPENDENCIES:
+- The base runtime contains Flask 3.1.3, Werkzeug, Jinja2, Playwright/Chromium, and Python's standard library (including sqlite3).
+- Use the base packages or standard library whenever practical. For this runtime, sqlite3 is preferred over adding an ORM; unittest and Flask's test_client are available for tests.
+- If a genuinely needed third-party package is absent, declare it in requirements.txt as an exact pin (package==version) BEFORE running application/tests. ZYRA prepares a cached, isolated task image from binary wheels before executing each command.
+- Never run pip install yourself, never use source distributions, URLs, editable installs, or unpinned requirements. If dependency preparation fails, report that exact failure and do not claim tests passed.
+- App/test execution has no network. Do not rely on CDN assets or external APIs; include local assets or use standard-library/local functionality.
+"""
     work_verified = False
     validation_report = None
     # Auto-detect specialist models if not provided
@@ -305,6 +360,7 @@ import unittest
 8. If the system asks you to confirm completion, and you are 100% sure, reply exactly:
 <CONFIRM_DONE>"""
     planner_sys += "\n" + delivery_rules
+    planner_sys += "\n" + dependency_rules
     planner_history.append({"role": "user", "content": planner_sys})
     
     coder_sys = """You are the CODER AGENT running in the shared ZYRA Python Docker runtime.
@@ -325,6 +381,7 @@ print("hello")
 [STEP_COMPLETE]
 8. If given an independent DELIVERY VALIDATOR report, treat it as a blocking requirement. Do not claim a fix after only reading files or rerunning tests; use <WRITE_FILE> to make the required change, then run a relevant verification. Preserve the client's acceptance hash and run command exactly."""
     coder_sys += "\n" + delivery_rules
+    coder_sys += "\n" + dependency_rules
     coder_history.append({"role": "user", "content": coder_sys})
     
     total_tokens_automode = 0
@@ -482,6 +539,7 @@ print("hello")
         coder_steps = 5
         step_completed = False
         coder_action_log = []
+        coder_verification_failed = False
         for step in range(coder_steps):
             # Prevent Context Overflow for Coder (Keep System Prompt + last 9 messages)
             if len(coder_history) > 10:
@@ -525,16 +583,18 @@ print("hello")
                         is_dangerous = any(keyword in command.lower() for keyword in ["rm ", "del ", "rmdir ", "rd ", "format ", "drop ", "sudo ", ">", ">>"])
                         
                         if auto_yes and not is_dangerous:
+                            choice = ""
                             pass # Silent approval
                         else:
                             if is_dangerous and auto_yes:
                                 print(f"\033[91m[Security Warning]\033[0m Dangerous command. Bypass overridden.")
                             choice = input(f"Allow execution? [Y/n]: ").strip().lower()
-                            if choice == 'n':
-                                print(f"\033[91m[Security]\033[0m Denied.\n")
-                                coder_history.append({"role": "user", "content": f"Command '{command}' denied by user."})
-                                all_success = False
-                                break
+                        if choice == 'n':
+                            print(f"\033[91m[Security]\033[0m Denied.\n")
+                            coder_history.append({"role": "user", "content": f"Command '{command}' denied by user."})
+                            coder_verification_failed = True
+                            all_success = False
+                            break
                                 
                         try:
                             result = execute_miner_command(sandbox_dir, command, runtime_image)
@@ -547,10 +607,13 @@ print("hello")
                             if not stdout and not stderr: output_msg = "Command executed successfully with no output."
 
                             if result.returncode != 0:
+                                coder_verification_failed = True
                                 err_preview = stderr.replace('\n', ' ')
                                 err_preview = err_preview if len(err_preview) < 80 else err_preview[:80] + "..."
                                 print(f"\033[91m[Failed]\033[0m {err_preview}\n")
                             else:
+                                if is_test_verification_command(command):
+                                    coder_verification_failed = False
                                 print(f"\033[92m[Success]\033[0m Command executed.\n")
                             audit_event("command_result", cycle=cycle + 1, step=step + 1,
                                         command=command, returncode=result.returncode,
@@ -568,12 +631,14 @@ print("hello")
                                 break
                                 
                         except subprocess.TimeoutExpired as e:
+                            coder_verification_failed = True
                             stdout_part = e.stdout.decode('utf-8') if isinstance(e.stdout, bytes) else (e.stdout or "")
                             print(f"\033[91m[Timeout]\033[0m Command took longer than 60s.\n")
                             coder_history.append({"role": "user", "content": f"Command timed out after 60s. Partial STDOUT:\n{stdout_part}"})
                             all_success = False
                             break
                         except Exception as e:
+                            coder_verification_failed = True
                             print(f"\033[91m[Error]\033[0m {str(e)}\n")
                             coder_history.append({"role": "user", "content": f"Command failed: {str(e)}"})
                             all_success = False
@@ -609,6 +674,14 @@ print("hello")
                 
                 # If they included [STEP_COMPLETE] in the same message, process it if commands succeeded
                 if "[STEP_COMPLETE]" in coder_output and all_success:
+                    if coder_verification_failed:
+                        coder_history.append({"role": "user", "content": (
+                            "A previous verification command failed. Do not mark this step complete until "
+                            "you rerun the relevant unit test command successfully after your fix."
+                        )})
+                        audit_event("coder_completion_rejected_after_command_failure",
+                                    cycle=cycle + 1, step=step + 1)
+                        continue
                     action_summary = "\n".join(coder_action_log)
                     if len(action_summary) > 2000: action_summary = action_summary[-2000:]
                     print(f"\033[93m[Coder Agent]\033[0m Step reported as complete.\n")
@@ -618,6 +691,14 @@ print("hello")
                     break
                     
             elif "[STEP_COMPLETE]" in coder_output:
+                if coder_verification_failed:
+                    coder_history.append({"role": "user", "content": (
+                        "A previous verification command failed. Do not mark this step complete until "
+                        "you rerun the relevant unit test command successfully after your fix."
+                    )})
+                    audit_event("coder_completion_rejected_after_command_failure",
+                                cycle=cycle + 1, step=step + 1)
+                    continue
                 action_summary = "\n".join(coder_action_log)
                 if len(action_summary) > 2000: action_summary = action_summary[-2000:]
                 print(f"\033[93m[Coder Agent]\033[0m Step reported as complete.\n")
@@ -1607,15 +1688,22 @@ os.system("start cmd /k zyra")
                         
                         task_id = str(uuid.uuid4())
                         acceptance_hash = contract_hash(acceptance)
+                        from zyra_cmd.mythchain_adapter import TASK_CATEGORY_BASE_REWARDS, reward_category_for_task
+                        task_category = reward_category_for_task(
+                            difficulty=acceptance.get("difficulty"), profile=acceptance.get("profile"))
+                        base_reward = TASK_CATEGORY_BASE_REWARDS[task_category]
                         chain_required = os.environ.get("ZYRA_MYTHCHAIN_MODE", "off").lower() == "required"
                         if chain_required:
                             from zyra_cmd.mythchain_adapter import MythchainConfig, MythchainTaskAdapter
                             MythchainTaskAdapter(MythchainConfig.from_env("client")).register_task(
-                                task_id, acceptance_hash, criteria=acceptance.get("criteria"))
+                                task_id, acceptance_hash, criteria=acceptance.get("criteria"),
+                                difficulty=acceptance.get("difficulty"), profile=acceptance.get("profile"))
                         task_payload = {
                             "task_id": task_id,
                             "prompt": task_prompt,
-                            "reward": 2.5,
+                            "reward": base_reward,
+                            "base_reward": base_reward,
+                            "reward_category": task_category,
                             "status": "pending",
                             "client": wallet.metamask_address or wallet.address,
                             "acceptance": acceptance,
@@ -1748,12 +1836,13 @@ os.system("start cmd /k zyra")
                         import asyncio
                         preferred_task_id = None
                         canonical_retry_after = {}
+                        skipped_task_ids = set()
                         while True:
                             p2p_node.expire_task_leases()
                             miner_identity = wallet.signing_address or wallet.address
                             canonical_mode = os.environ.get("ZYRA_MYTHCHAIN_MODE", "off").lower() == "required"
                             now_monotonic = time.monotonic()
-                            excluded_task_ids = {
+                            excluded_task_ids = skipped_task_ids | {
                                 task_id for task_id, retry_at in canonical_retry_after.items()
                                 if retry_at > now_monotonic
                             }
@@ -1795,7 +1884,6 @@ os.system("start cmd /k zyra")
                                 canonical_attempt_id = canonical_lease.get(
                                     "attempt_id", canonical_lease.get("attemptId"))
                                 clear_miner_status()
-                                print(f"[Mythchain] Canonical lease confirmed: attempt {canonical_attempt_id}")
 
                             lease = p2p_node.claim_task(task_id, wallet)
                             if lease is None:
@@ -1809,16 +1897,36 @@ os.system("start cmd /k zyra")
                             if current_lease.get("lease_id") != lease["lease_id"]:
                                 clear_miner_status()
                                 print(f"[Miner] Another signed claim won task {task_id}; skipping this attempt.")
+                                # Back off in case relay state has not converged yet.
+                                # Once the winning signed lease is visible, task selection
+                                # filters it out until that lease expires.
+                                canonical_retry_after[task_id] = time.monotonic() + 15
+                                time.sleep(5)
                                 continue
 
+                            if canonical_attempt_id:
+                                print(f"[Mythchain] Canonical lease confirmed: attempt {canonical_attempt_id}")
                             clear_miner_status()
                             print(f"\n\033[92m[P2P Mempool]\033[0m Found Task! Reward: {reward} ZYRA")
                             print(f"Task ID: \033[96m{task_id}\033[0m")
                             delivered = run_automode(llm, prompt, history, wallet, ledger, llm.model_name, auto_yes=True, planner_model=args.planner_model, coder_model=args.coder_model, task_id=task_id, attempt_id=lease["lease_id"], canonical_attempt_id=canonical_attempt_id)
-                            if delivered is False and p2p_node.tasks.get(task_id, {}).get("status") in ("mining", "pending"):
-                                print(f"[Miner] Task {task_id} is not submitted yet. Retrying it before polling other tasks.")
-                                preferred_task_id = task_id
-                                time.sleep(5)
+                            if delivered is False:
+                                print(f"[Miner] Task {task_id} did not produce a deliverable result; skipping it for this mining session.")
+                                release_result = release_failed_miner_attempt(
+                                    task_id, lease["lease_id"], canonical_attempt_id, wallet, p2p_node
+                                )
+                                if canonical_attempt_id and release_result["chain_released"]:
+                                    print(f"[Mythchain] Released unused canonical lease for task {task_id}.")
+                                if release_result["error"]:
+                                    print(f"[Lease] {release_result['error']}")
+                                if (canonical_attempt_id and not release_result["chain_released"]
+                                        and not release_result["p2p_released"]):
+                                    print("[P2P] Retaining the signed claim until the canonical lease can be checked/released.")
+                                elif not release_result["p2p_released"]:
+                                    print("[P2P] Could not gossip the signed lease release; it will expire normally.")
+                                skipped_task_ids.add(task_id)
+                                preferred_task_id = None
+                                time.sleep(2)
                                 continue
                             # After delivery attempt, check what validator decided
                             task_status = p2p_node.tasks.get(task_id, {}).get("status")

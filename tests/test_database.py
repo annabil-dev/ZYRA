@@ -2,6 +2,11 @@ import pytest
 import os
 import sqlite3
 import logging
+import sys
+from pathlib import Path
+
+# These tests cover the archived desktop app, not the active ZYRA CLI package.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "archives" / "legacy_app"))
 from app.core.database import DatabaseManager
 
 def test_database_initialization(tmp_path):

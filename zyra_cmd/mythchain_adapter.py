@@ -23,6 +23,38 @@ class MythchainUnavailable(MythchainError):
     pass
 
 
+TASK_CATEGORY_BASE_REWARDS = {
+    "light": 0.10,
+    "medium": 0.25,
+    "heavy": 0.50,
+    "very_heavy": 1.00,
+}
+
+
+def reward_category_for_task(difficulty=None, profile=None):
+    """Map task difficulty to its fixed reward category, using runtime profile as fallback."""
+    difficulty_map = {
+        "easy": "light", "light": "light", "low": "light", "simple": "light",
+        "medium": "medium", "normal": "medium", "moderate": "medium",
+        "hard": "heavy", "heavy": "heavy", "high": "heavy", "advanced": "heavy",
+        "very_hard": "very_heavy", "very-hard": "very_heavy",
+        "very-heavy": "very_heavy", "very_heavy": "very_heavy",
+        "expert": "very_heavy",
+    }
+    profile_map = {"python": "light", "flask-web": "medium"}
+    if difficulty is not None:
+        normalized = str(difficulty).strip().lower().replace(" ", "_")
+        category = difficulty_map.get(normalized)
+        if category is None:
+            raise MythchainError(f"Unsupported task difficulty for reward category: {difficulty!r}")
+        return category
+    normalized_profile = str(profile or "").strip().lower()
+    category = profile_map.get(normalized_profile)
+    if category is None:
+        raise MythchainError("Task reward category requires a known difficulty or runtime profile")
+    return category
+
+
 def _canonical_criteria_json(criteria):
     if criteria is None:
         return ""
@@ -114,32 +146,56 @@ class MythchainTaskAdapter:
         command = [self.config.binary, *args, "--node", self.config.node, "--output", "json"]
         if self.config.home:
             command.extend(["--home", self.config.home])
+        commands = [command]
         if tx:
             command.extend(["--from", self.config.key_name, "--chain-id", self.config.chain_id,
-                            "--broadcast-mode", "sync", "--yes",
+                            "--broadcast-mode", "sync", "--yes", "--gas", "1000000",
                             "--keyring-backend", self.config.keyring_backend])
             if self.config.fees:
-                command.extend(["--fees", self.config.fees])
-        if self.config.wsl_distro:
-            command = [os.environ.get("WSL_BINARY", "wsl.exe"), "-d", self.config.wsl_distro,
-                       "--", *command]
-        try:
-            result = self.runner(command, capture_output=True, text=True, timeout=self.config.timeout,
-                                 check=False)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise MythchainUnavailable(f"Mythchain CLI/RPC unavailable: {exc}") from exc
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout or "command failed").strip()[-2000:]
-            transport_failures = ("connection refused", "connection reset", "network is unreachable",
-                                  "no such host", "context deadline exceeded", "i/o timeout",
-                                  "failed to connect", "connection timed out")
-            if any(marker in detail.lower() for marker in transport_failures):
-                raise MythchainUnavailable(f"Mythchain RPC unavailable: {detail}")
-            raise MythchainError(f"Mythchain command failed ({result.returncode}): {detail}")
-        try:
-            return json.loads(result.stdout)
-        except (TypeError, json.JSONDecodeError) as exc:
-            raise MythchainError("Mythchain CLI did not return valid JSON (--output json)") from exc
+                commands.append(command + ["--fees", self.config.fees])
+
+        for index, command in enumerate(commands):
+            if self.config.wsl_distro:
+                command = [os.environ.get("WSL_BINARY", "wsl.exe"), "-d", self.config.wsl_distro,
+                           "--", *command]
+            try:
+                result = self.runner(command, capture_output=True, text=True, timeout=self.config.timeout,
+                                     check=False)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise MythchainUnavailable(f"Mythchain CLI/RPC unavailable: {exc}") from exc
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout or "command failed").strip()[-2000:]
+                if index == 0 and len(commands) > 1 and self._is_fee_rejection(detail):
+                    continue
+                transport_failures = ("connection refused", "connection reset", "network is unreachable",
+                                      "no such host", "context deadline exceeded", "i/o timeout",
+                                      "failed to connect", "connection timed out")
+                if any(marker in detail.lower() for marker in transport_failures):
+                    raise MythchainUnavailable(f"Mythchain RPC unavailable: {detail}")
+                raise MythchainError(f"Mythchain command failed ({result.returncode}): {detail}")
+            try:
+                response = json.loads(result.stdout)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise MythchainError("Mythchain CLI did not return valid JSON (--output json)") from exc
+            if tx and isinstance(response, dict):
+                try:
+                    code = int(response.get("code", 0))
+                except (TypeError, ValueError) as exc:
+                    raise MythchainError("Malformed Mythchain transaction response") from exc
+                if code:
+                    detail = response.get("raw_log", response.get("rawLog", "transaction failed"))
+                    if index == 0 and len(commands) > 1 and self._is_fee_rejection(str(detail)):
+                        continue
+                    raise MythchainError(f"Mythchain transaction failed ({code}): {detail}")
+            return response
+        raise MythchainError("Mythchain transaction could not be submitted")
+
+    @staticmethod
+    def _is_fee_rejection(detail):
+        lowered = str(detail).lower()
+        return any(marker in lowered for marker in (
+            "gas fee required", "insufficient fees", "insufficient fee", "gasless bootstrap",
+        ))
 
     @staticmethod
     def _lease(response):
@@ -218,24 +274,27 @@ class MythchainTaskAdapter:
             raise MythchainError(f"Mythchain transaction committed but failed ({code}): {raw_log}")
         return response
 
-    def register_task(self, task_id, acceptance_hash, criteria=None):
+    def register_task(self, task_id, acceptance_hash, criteria=None, *, difficulty=None, profile=None):
         criteria_json = _canonical_criteria_json(criteria)
+        task_category = reward_category_for_task(difficulty=difficulty, profile=profile) if criteria_json else ""
 
         def verify_registered(record):
             if record.get("acceptance_hash", record.get("acceptanceHash")) != acceptance_hash:
                 return False
-            return _state_criteria_json(record) == criteria_json
+            stored_category = record.get("task_category", record.get("taskCategory", ""))
+            return _state_criteria_json(record) == criteria_json and stored_category == task_category
 
         existing = self.query_task(task_id)
         if existing is not None:
             if not verify_registered(existing):
-                raise MythchainError("Task ID is already registered with a different acceptance hash or criteria rubric")
+                raise MythchainError("Task ID is already registered with a different acceptance hash, criteria rubric, or reward category")
             return existing
         try:
             command = ["tx", "mythprotocol", "register-task", "--task-id", task_id,
                        "--acceptance-hash", acceptance_hash]
             if criteria_json:
                 command.extend(["--criteria-json", criteria_json])
+                command.extend(["--task-category", task_category])
             self._run(command, tx=True)
         except MythchainError:
             # A concurrent/retried registration may have committed despite a CLI
@@ -248,7 +307,7 @@ class MythchainTaskAdapter:
             existing = self.query_task(task_id)
             if existing is not None:
                 if not verify_registered(existing):
-                    raise MythchainError("Registered task acceptance hash or criteria rubric does not match")
+                    raise MythchainError("Registered task acceptance hash, criteria rubric, or reward category does not match")
                 return existing
             if time.monotonic() >= deadline:
                 raise MythchainUnavailable("Task registration was not visible in committed chain state")
@@ -319,6 +378,56 @@ class MythchainTaskAdapter:
                     return None
             if time.monotonic() >= deadline:
                 raise MythchainUnavailable("Could not confirm canonical task ownership before timeout")
+            self.sleep(1)
+
+    def release_task(self, task_id, attempt_id):
+        """Release this miner's unused canonical lease and confirm committed state."""
+        if not re.fullmatch(r"[0-9a-f]{64}", attempt_id or ""):
+            raise MythchainError("attempt_id must be a lowercase SHA-256 hex string")
+        lease = self.query_task(task_id)
+        if lease is None:
+            raise MythchainError("Task is not registered on Mythchain")
+        owner = self._value(lease, "miner_address", "minerAddress", "")
+        canonical_attempt = self._value(lease, "attempt_id", "attemptId", "")
+        status = str(lease.get("status", "")).upper()
+        if owner != self.config.address or canonical_attempt != attempt_id:
+            raise MythchainError("Cannot release task: miner/attempt does not own the canonical lease")
+        if status == "RELEASED":
+            return lease
+        if status != "LEASED":
+            raise MythchainError(f"Cannot release task while chain status is {status or 'unknown'}")
+
+        tx_hash = ""
+        try:
+            response = self._run([
+                "tx", "mythprotocol", "release-task", "--task-id", task_id,
+                "--attempt-id", attempt_id,
+            ], tx=True)
+            tx_hash = response.get("txhash", response.get("txHash", "")) if isinstance(response, dict) else ""
+        except MythchainError:
+            current = self.query_task(task_id)
+            if (current and self._value(current, "miner_address", "minerAddress", "") == self.config.address
+                    and self._value(current, "attempt_id", "attemptId", "") == attempt_id
+                    and str(current.get("status", "")).upper() == "RELEASED"):
+                return current
+            raise
+
+        deadline = time.monotonic() + min(self.config.timeout, 30)
+        while True:
+            current = self.query_task(task_id)
+            if current is not None:
+                current_owner = self._value(current, "miner_address", "minerAddress", "")
+                current_attempt = self._value(current, "attempt_id", "attemptId", "")
+                current_status = str(current.get("status", "")).upper()
+                if current_attempt != attempt_id or current_owner != self.config.address:
+                    raise MythchainError("Canonical lease changed while release was being committed")
+                if current_status == "RELEASED":
+                    return current
+                if current_status != "LEASED":
+                    raise MythchainError(f"Lease release was not accepted; chain status is {current_status}")
+            self._check_committed_tx(tx_hash)
+            if time.monotonic() >= deadline:
+                raise MythchainUnavailable("Lease release was not visible in committed chain state before timeout")
             self.sleep(1)
 
     def submit_task_result(self, task_id, attempt_id, result_cid, proof_hash):

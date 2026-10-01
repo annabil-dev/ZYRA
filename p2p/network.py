@@ -11,7 +11,8 @@ import socket
 from p2p.protocol import MessageType, create_message, parse_message
 from p2p.votes import QUORUM, tally, tally_criteria_votes, verify_vote
 from p2p.content import content_cid, is_sha256_cid, verify_content_cid
-from p2p.leases import CLAIM_SETTLE_SECONDS, create_lease, lease_order, verify_lease
+from p2p.leases import (CLAIM_SETTLE_SECONDS, create_lease, create_lease_release,
+                        lease_order, verify_lease, verify_lease_release)
 
 logging.basicConfig(filename='zyra_p2p.log', level=logging.INFO, format='%(asctime)s - [P2P] %(message)s')
 MAX_FILE_BYTES = 256 * 1024 * 1024
@@ -36,6 +37,7 @@ class P2PNode:
         self.signatures = {} # trajectory_hash -> {judge_wallet: signed vote}
         self._finalized_trajectories = set()
         self.task_claims = {} # task_id -> {lease_id: signed lease}
+        self.task_releases = {} # task_id -> {lease_id: signed release tombstone}
         
         # Keep track of seen message IDs to prevent infinite gossip loops
         self.seen_messages = set()
@@ -100,7 +102,8 @@ class P2PNode:
                     "tasks": self.tasks,
                     "trajectories": self.trajectories,
                     "signatures": self.signatures,
-                    "task_claims": self.task_claims
+                    "task_claims": self.task_claims,
+                    "task_releases": self.task_releases
                 }
                 await self.relay_ws.send(create_message(MessageType.MEMPOOL_DATA, sync_data))
                 
@@ -171,7 +174,8 @@ class P2PNode:
                 "tasks": self.tasks,
                 "trajectories": self.trajectories,
                 "signatures": self.signatures,
-                "task_claims": self.task_claims
+                "task_claims": self.task_claims,
+                "task_releases": self.task_releases
             }
             await websocket.send(create_message(MessageType.MEMPOOL_DATA, sync_data))
             
@@ -312,6 +316,10 @@ class P2PNode:
         elif msg_type == MessageType.TASK_CLAIM:
             if self.accept_task_claim(payload):
                 await self.broadcast(raw_msg_str, exclude=websocket)
+
+        elif msg_type == MessageType.TASK_RELEASE:
+            if self.accept_task_release(payload):
+                await self.broadcast(raw_msg_str, exclude=websocket)
                 
         elif msg_type == MessageType.SYNC_MEMPOOL:
             # Send our current state
@@ -319,7 +327,8 @@ class P2PNode:
                 "tasks": self.tasks,
                 "trajectories": self.trajectories,
                 "signatures": self.signatures,
-                "task_claims": self.task_claims
+                "task_claims": self.task_claims,
+                "task_releases": self.task_releases,
             }
             await websocket.send(create_message(MessageType.MEMPOOL_DATA, sync_data))
             
@@ -358,6 +367,10 @@ class P2PNode:
                 if isinstance(leases, dict):
                     for lease in leases.values():
                         self.accept_task_claim(lease)
+            for releases in payload.get("task_releases", {}).values():
+                if isinstance(releases, dict):
+                    for release in releases.values():
+                        self.accept_task_release(release)
             for votes in payload.get("signatures", {}).values():
                 if isinstance(votes, dict):
                     for vote in votes.values():
@@ -535,17 +548,47 @@ class P2PNode:
         now = time.time() if now is None else now
         expired = []
         for task_id, task in self.tasks.items():
+            claims = self.task_claims.get(task_id, {})
+            for lease_id, claim in list(claims.items()):
+                if not verify_lease(claim, task, now):
+                    claims.pop(lease_id, None)
+            releases = self.task_releases.get(task_id, {})
+            for lease_id, release in list(releases.items()):
+                if float(release.get("lease_expires_at", 0)) <= now:
+                    releases.pop(lease_id, None)
+            if not releases:
+                self.task_releases.pop(task_id, None)
+
             lease = task.get("lease")
             if lease and not verify_lease(lease, task, now):
-                task.pop("lease", None)
-                task.pop("attempt_id", None)
-                if task.get("status") in ("mining", "validating"):
-                    task["status"] = "pending"
-                self.task_claims.pop(task_id, None)
-                self._notify_task_updated(task)
                 expired.append(task_id)
+                self._reconcile_task_claim(task_id)
+                self._notify_task_updated(task)
                 self._run_coroutine(self.broadcast(create_message(MessageType.TASK_UPDATED, task)))
         return expired
+
+    def _reconcile_task_claim(self, task_id):
+        task = self.tasks.get(task_id)
+        if not task:
+            return None
+        released = self.task_releases.get(task_id, {})
+        active = [claim for lease_id, claim in self.task_claims.get(task_id, {}).items()
+                  if lease_id not in released and verify_lease(claim, task)]
+        if active:
+            winner = min(active, key=lease_order)
+            task["lease"] = winner
+            task["attempt_id"] = winner["lease_id"]
+            task["status"] = "mining"
+            task["miner"] = winner["miner_identity"]
+            return winner
+        task.pop("lease", None)
+        task.pop("attempt_id", None)
+        task.pop("miner", None)
+        if task.get("status") in ("mining", "validating"):
+            task["status"] = "pending"
+        if not self.task_claims.get(task_id):
+            self.task_claims.pop(task_id, None)
+        return None
 
     def accept_task_claim(self, lease):
         if not isinstance(lease, dict):
@@ -554,22 +597,47 @@ class P2PNode:
         task = self.tasks.get(task_id)
         if not task or task.get("status") in ("completed", "failed", "validating") or not verify_lease(lease, task):
             return False
+        if lease.get("lease_id") in self.task_releases.get(task_id, {}):
+            return False
         claims = self.task_claims.setdefault(task_id, {})
         if lease["lease_id"] in claims:
             return False
         claims[lease["lease_id"]] = lease
-        active = [claim for claim in claims.values() if verify_lease(claim, task)]
-        if not active:
+        winner = self._reconcile_task_claim(task_id)
+        if winner is None:
             return False
-        winner = min(active, key=lease_order)
-        current = task.get("lease")
-        if current and current.get("lease_id") == winner["lease_id"]:
-            return True
-        task["lease"] = winner
-        task["attempt_id"] = winner["lease_id"]
-        task["status"] = "mining"
-        task["miner"] = winner["miner_identity"]
         self._notify_task_updated(task)
+        return True
+
+    def accept_task_release(self, release):
+        if not isinstance(release, dict):
+            return False
+        task_id = release.get("task_id")
+        task = self.tasks.get(task_id)
+        lease_id = release.get("lease_id")
+        if not task or not isinstance(lease_id, str):
+            return False
+        if task.get("status") in ("completed", "failed", "validating"):
+            return False
+        releases = self.task_releases.setdefault(task_id, {})
+        if lease_id in releases:
+            return False
+        claim = self.task_claims.get(task_id, {}).get(lease_id)
+        if claim is None and task.get("lease", {}).get("lease_id") == lease_id:
+            claim = task["lease"]
+        if claim is None:
+            claim = release.get("lease")
+        if not verify_lease(claim, task) or not verify_lease_release(release, task, claim):
+            return False
+
+        releases[lease_id] = dict(release)
+        claims = self.task_claims.get(task_id, {})
+        claims.pop(lease_id, None)
+        if task.get("lease", {}).get("lease_id") == lease_id:
+            self._reconcile_task_claim(task_id)
+            self._notify_task_updated(task)
+        if not claims:
+            self.task_claims.pop(task_id, None)
         return True
 
     def claim_task(self, task_id, wallet):
@@ -586,6 +654,20 @@ class P2PNode:
             return None
         self._run_coroutine(self.broadcast(create_message(MessageType.TASK_CLAIM, lease)))
         return lease
+
+    def release_task_claim(self, task_id, lease_id, wallet):
+        """Release this node's current signed P2P claim and gossip a tombstone."""
+        task = self.tasks.get(task_id)
+        lease = task.get("lease") if task else None
+        identity = getattr(wallet, "signing_address", None) or wallet.address
+        if (not isinstance(lease, dict) or lease.get("lease_id") != lease_id
+                or lease.get("miner_identity") != identity):
+            return False
+        release = create_lease_release(wallet, lease)
+        if not self.accept_task_release(release):
+            return False
+        self._run_coroutine(self.broadcast(create_message(MessageType.TASK_RELEASE, release)))
+        return True
 
     def accept_vote(self, vote):
         if not isinstance(vote, dict):

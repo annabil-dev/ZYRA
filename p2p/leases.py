@@ -13,6 +13,7 @@ LEASE_SECONDS = 30 * 60
 MAX_LEASE_SECONDS = 60 * 60
 CLAIM_SETTLE_SECONDS = 3
 DOMAIN = "ZYRA-TASK-LEASE-v1"
+RELEASE_DOMAIN = "ZYRA-TASK-LEASE-RELEASE-v1"
 
 
 def lease_bytes(lease):
@@ -62,3 +63,62 @@ def verify_lease(lease, task, now=None):
 def lease_order(lease):
     """A total deterministic preference among concurrent signed claims."""
     return lease["lease_id"]
+
+
+def lease_release_bytes(release):
+    fields = ("task_id", "acceptance_hash", "lease_id", "miner_identity", "public_key",
+              "lease_issued_at", "lease_expires_at", "released_at")
+    return json.dumps({"domain": RELEASE_DOMAIN, **{key: release[key] for key in fields}},
+                      sort_keys=True, separators=(",", ":")).encode()
+
+
+def create_lease_release(wallet, lease, now=None):
+    """Sign an owner's request to abandon one advisory P2P lease."""
+    public_key = getattr(wallet, "signing_public_key", None) or wallet.public_key
+    private_key = getattr(wallet, "signing_private_key", None) or wallet.private_key
+    release = {
+        "task_id": lease["task_id"],
+        "acceptance_hash": lease["acceptance_hash"],
+        "lease_id": lease["lease_id"],
+        "miner_identity": judge_address(public_key),
+        "public_key": public_key,
+        "lease_issued_at": float(lease["issued_at"]),
+        "lease_expires_at": float(lease["expires_at"]),
+        "released_at": float(time.time() if now is None else now),
+        # Relays can validate/replay the release even if their task-claim map
+        # was pruned before a peer asks for a mempool sync.
+        "lease": dict(lease),
+    }
+    key = ecdsa.SigningKey.from_string(bytes.fromhex(private_key), curve=ecdsa.SECP256k1)
+    release["signature"] = key.sign_deterministic(
+        lease_release_bytes(release), hashfunc=hashlib.sha256).hex()
+    return release
+
+
+def verify_lease_release(release, task, lease, now=None):
+    """Verify a release against the exact signed claim it abandons."""
+    try:
+        if not isinstance(release, dict) or not isinstance(task, dict) or not isinstance(lease, dict):
+            return False
+        if (release.get("task_id") != task.get("task_id")
+                or release.get("acceptance_hash") != task.get("acceptance_hash")
+                or release.get("task_id") != lease.get("task_id")
+                or release.get("acceptance_hash") != lease.get("acceptance_hash")
+                or release.get("lease_id") != lease.get("lease_id")
+                or release.get("miner_identity") != lease.get("miner_identity")
+                or release.get("public_key") != lease.get("public_key")
+                or release.get("lease_issued_at") != lease.get("issued_at")
+                or release.get("lease_expires_at") != lease.get("expires_at")
+                or release.get("miner_identity") != judge_address(release.get("public_key"))):
+            return False
+        issued = float(lease["issued_at"])
+        expiry = float(lease["expires_at"])
+        released = float(release["released_at"])
+        current = float(time.time() if now is None else now)
+        if released < issued or released >= expiry or released > current + 60:
+            return False
+        key = ecdsa.VerifyingKey.from_string(bytes.fromhex(release["public_key"]), curve=ecdsa.SECP256k1)
+        return key.verify(bytes.fromhex(release["signature"]), lease_release_bytes(release),
+                          hashfunc=hashlib.sha256)
+    except (ValueError, KeyError, TypeError, ecdsa.BadSignatureError, ecdsa.MalformedPointError):
+        return False

@@ -233,15 +233,24 @@ def validate_deliverables(root, contract):
         relative_path(name)
         if not (root / name).is_file():
             raise ValueError(f"zyra.json describes a missing file: {name}")
-    # Dependencies must already exist in the versioned image. No package install from miner input.
-    allowed = {"flask==3.1.3"}
+    # Task dependencies are prepared in a separate builder from exact binary-wheel pins.
+    # The app/test containers themselves remain offline.
+    requirement_pattern = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*==[A-Za-z0-9][A-Za-z0-9.!+_-]*\Z")
+    requirements_text = (root / "requirements.txt").read_text(encoding="utf-8")
+    if len(requirements_text.encode("utf-8")) > 32 * 1024:
+        raise ValueError("requirements.txt exceeds the 32 KiB runtime limit")
     dependencies = set()
-    for line in (root / "requirements.txt").read_text(encoding="utf-8").splitlines():
-        requirement = line.strip().lower()
-        if requirement and not requirement.startswith("#"):
-            if requirement not in allowed:
-                raise ValueError(f"Dependency unavailable in {RUNTIME}: {line}. Do not replace it with a mock.")
-            dependencies.add(requirement)
+    for line_number, raw_line in enumerate(requirements_text.splitlines(), start=1):
+        requirement = raw_line.split("#", 1)[0].strip()
+        if requirement:
+            if not requirement_pattern.fullmatch(requirement) or "*" in requirement:
+                raise ValueError(
+                    "requirements.txt must use exact package==version pins supported by the isolated "
+                    f"wheel builder (line {line_number})"
+                )
+            dependencies.add(requirement.lower())
+            if len(dependencies) > 64:
+                raise ValueError("requirements.txt exceeds the 64 dependency runtime limit")
     if contract["profile"] == "flask-web" and "flask==3.1.3" not in dependencies:
         raise ValueError("Web deliverables must declare Flask==3.1.3")
     return manifest
@@ -252,7 +261,10 @@ def delivery_instructions(contract):
     return f"""DELIVERY CONTRACT (client-owned; do not weaken or replace it):
 {json.dumps(contract, indent=2)}
 Acceptance hash: {contract_hash(contract)}
-Runtime {RUNTIME}: Python 3.11, standard library, real Flask 3.1.3; no internet at task execution.
+Runtime {RUNTIME}: Python 3.11, standard library, real Flask 3.1.3; task commands/tests run without internet.
+Additional dependencies must be exact `package==version` pins in requirements.txt. ZYRA prepares a
+cached, isolated task image using binary wheels before execution; do not run pip install yourself.
+The builder cannot use source distributions, direct URLs, editable installs, or unpinned requirements.
 Do not fake libraries, replace the application's runtime with mocks, or skip failing tests.
 For flask-web: use real Flask; start via `{startup_command(contract)}`, read PORT from the environment
 (default {contract.get('port', 8000)}), listen on 0.0.0.0, debug=False, use_reloader=False.
@@ -268,5 +280,6 @@ List README.md and zyra.json themselves too. Do not write verification claims wi
 The judge checks real startup and client HTTP/output expectations independently of your unit tests.
 If the client contract includes weighted criteria, do not remove or change them. Report evidence and
 known failures for every criterion; hard-gate criteria must pass for the task to pass.
-If a required framework/dependency is unsupported, report that limitation instead of producing fake substitutes.
+If the isolated wheel builder cannot prepare a required dependency, report that exact error instead of
+producing fake substitutes or claiming the tests passed.
 """

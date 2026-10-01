@@ -108,6 +108,6 @@ class PoUWValidator:
                 return False, {"status": "UNAVAILABLE", "reason": f"Workspace download unavailable: {exc}", "retry": False}
             try:
                 extract_workspace(archive, workspace)
-                return validate_workspace(workspace, contract)
+                return validate_workspace(workspace, contract, require_runtime_lock=True)
             except Exception as exc:
                 return False, {"status": "FAILED", "reason": f"Invalid workspace: {exc}", "retry": True}

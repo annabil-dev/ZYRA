@@ -80,12 +80,14 @@ tests/test_miner_wallet_migration.py
 tests/test_mns_v0.py
 tests/test_model_identity.py
 tests/test_mythchain_adapter.py
+tests/test_mythchain_release_reclaim_e2e.py
 tests/test_overfit_tiny_dataset.py
 tests/test_paths.py
 tests/test_pretraining_safety.py
 tests/test_rms_norm.py
 tests/test_rope.py
 tests/test_signed_quorum.py
+tests/test_synthetic_tasks.py
 tests/test_task_leases.py
 tests/test_tokenizer.py
 tests/test_tokenizer_roundtrip.py
@@ -102,6 +104,7 @@ zyra_cmd/installer.py
 zyra_cmd/mns_v0.json
 zyra_cmd/mns_v0.py
 zyra_cmd/mythchain_adapter.py
+zyra_cmd/synthetic_tasks.py
 zyra_cmd/web3_bridge.py
 zyra_cmd/zyra_cli.py
 zyra_network.egg-info/PKG-INFO

@@ -59,9 +59,8 @@ class DatasetMetadata:
         dataset_fingerprint = dataset_metadata.get("tokenizer_fingerprint", {})
         
         if dataset_fingerprint.get("fingerprint_hash") != expected_fingerprint["fingerprint_hash"]:
-            # raise ValueError(
-            #     f"Tokenizer mismatch! Dataset was built with a different tokenizer. "
-            #     f"Dataset hash: {dataset_fingerprint.get('fingerprint_hash')} != "
-            #     f"Current hash: {expected_fingerprint['fingerprint_hash']}"
-            # )
-            pass
+            raise ValueError(
+                "Tokenizer mismatch! Dataset was built with a different tokenizer. "
+                f"Dataset hash: {dataset_fingerprint.get('fingerprint_hash')} != "
+                f"Current hash: {expected_fingerprint['fingerprint_hash']}"
+            )
