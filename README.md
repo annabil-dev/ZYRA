@@ -138,12 +138,29 @@ task regardless of score. The score is an acceptance score, not a calibrated
 probability of success.
 
 For Mythchain tasks, registration commits the weighted rubric; each Cosmos Judge
-vote includes its per-criterion result JSON. The weighted CLI adapter first shipped
-in v2.1.62; v2.1.65 adds the unattended synthetic producer. Mythchain validators
-must run the matching updated binary; installing the Python package does not upgrade
-or start chain validators. Required-chain Miners use P2P for discovery but let
-Mythchain decide every claim. Local P2P voting and canonical L1 Judge quorum are
-separate; query Mythchain for final task status.
+vote includes its per-criterion result JSON. The weighted adapter first shipped in
+v2.1.62; v2.1.65 adds the unattended synthetic producer. **ZYRA 2.1.66** adds native
+Cosmos `SIGN_MODE_DIRECT` signing through CosmPy, so Client/Miner/Judge processes no
+longer require a `mythprotocold` executable or WSL. Required-chain Miners still use
+P2P for discovery, but Mythchain decides every claim. Local P2P voting and canonical
+L1 Judge quorum are separate; query Mythchain for final task status.
+
+Native signing uses an explicit Cosmos gRPC or REST endpoint and a protected,
+role-specific mnemonic/private-key file. Example for a Windows Miner:
+
+```powershell
+$env:ZYRA_MYTHCHAIN_MODE = "required"
+$env:MYTHCHAIN_CHAIN_ID = "myth-testnet-1"
+$env:MYTHCHAIN_GRPC_ENDPOINT = "grpc+http://<MYTHCHAIN_HOST>:9090"
+$env:MYTHCHAIN_MINER_ADDRESS = "myth1..."
+$env:MYTHCHAIN_MINER_PRIVATE_KEY_FILE = "$HOME\.zyra-secrets\miner.key"
+$env:MYTHCHAIN_TX_FEES = "<FEE_AMOUNT>umtc"
+```
+
+`tcp://<host>:26657` is the CometBFT RPC, not the Cosmos gRPC endpoint. Use the node's
+gRPC service (commonly port 9090) or REST API (commonly port 1317 when enabled). Keep
+the private-key/mnemonic file readable only by the ZYRA role account; never put the
+secret in command-line arguments, a P2P message, or source control.
 
 ## Miner/Judge Docker runtime and task dependencies
 
@@ -180,7 +197,7 @@ runtime controls generated application/test dependencies and execution.
 
 ## Autonomous synthetic task producer
 
-`zyra-syntheticd` (in `zyra-network==2.1.65`) is a headless producer sidecar intended
+`zyra-syntheticd` (in `zyra-network==2.1.65` and later) is a headless producer sidecar intended
 to run beside a Mythchain validator host. Systemd starts it automatically; no Client
 command or separate cron scheduler is needed. The daemon uses a reviewed catalog of
 24 task types (six per reward category), registers tasks on the configured L1, then
@@ -197,20 +214,20 @@ ZYRA_DATA_DIR=/var/lib/zyra-synthetic
 ZYRA_SYNTHETIC_MAX_PER_DAY=50
 ZYRA_SYNTHETIC_MIN_INTERVAL_SECONDS=300
 ZYRA_SYNTHETIC_MAX_INTERVAL_SECONDS=1800
-MYTHCHAIN_BINARY=/usr/bin/mythprotocold
 MYTHCHAIN_CHAIN_ID=myth-mainnet-1
-MYTHCHAIN_NODE=tcp://127.0.0.1:26657
-MYTHCHAIN_KEYRING_BACKEND=file
-MYTHCHAIN_CLIENT_KEY=synthetic-client
+MYTHCHAIN_GRPC_ENDPOINT=grpc+http://127.0.0.1:9090
 MYTHCHAIN_CLIENT_ADDRESS=<SYNTHETIC_CLIENT_MYTH_ADDRESS>
-MYTHCHAIN_CLIENT_HOME=/var/lib/zyra-synthetic/keyring
-MYTHCHAIN_TX_FEES=1000umyth
+MYTHCHAIN_TX_FEES=<FEE_AMOUNT>umtc
+MYTHCHAIN_GAS_LIMIT=1000000
 ```
 
-Install `zyra-network==2.1.65` in a Linux virtual environment. Run `zyra-syntheticd`
-under systemd with a dedicated Cosmos service account and keyring; do not use the
-validator consensus key. Supply a file-keyring passphrase through an encrypted
-systemd credential, and fund the service account for MYTH fees.
+The systemd unit below supplies the private key path through its runtime credential
+directory; do not add the secret path to this environment file.
+
+Install `zyra-network==2.1.66` in a Linux virtual environment. Run `zyra-syntheticd`
+under systemd with a dedicated Cosmos service account and native private-key
+credential; do not use the validator consensus key. Supply the key file through an
+encrypted systemd credential, and fund the service account for MTC fees.
 Example unit at `/etc/systemd/system/zyra-syntheticd.service`:
 
 ```ini
@@ -224,8 +241,8 @@ Type=simple
 User=annabilardec
 WorkingDirectory=/var/lib/zyra-synthetic
 EnvironmentFile=/etc/zyra/synthetic.env
-LoadCredentialEncrypted=keyring-password:/etc/credstore.encrypted/zyra-keyring-password
-Environment=MYTHCHAIN_KEYRING_PASSWORD_FILE=%d/keyring-password
+LoadCredentialEncrypted=cosmos-key:/etc/credstore.encrypted/zyra-cosmos-key
+Environment=MYTHCHAIN_CLIENT_PRIVATE_KEY_FILE=%d/cosmos-key
 ExecStart=/opt/zyra-venv/bin/zyra-syntheticd
 Restart=on-failure
 RestartSec=30

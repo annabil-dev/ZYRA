@@ -18,31 +18,61 @@ def result(payload, code=0, stderr=""):
     return SimpleNamespace(returncode=code, stdout=json.dumps(payload), stderr=stderr)
 
 
-def test_file_keyring_password_is_sent_on_stdin_not_in_cli_args(tmp_path, monkeypatch):
-    password_file = tmp_path / "keyring-password"
-    password_file.write_text("service-only-passphrase\n", encoding="utf-8")
-    monkeypatch.setenv("MYTHCHAIN_BINARY", "mythprotocold")
-    monkeypatch.setenv("MYTHCHAIN_NODE", "tcp://127.0.0.1:26657")
-    monkeypatch.setenv("MYTHCHAIN_CHAIN_ID", "myth-mainnet-1")
-    monkeypatch.setenv("MYTHCHAIN_CLIENT_KEY", "synthetic-client")
-    monkeypatch.setenv("MYTHCHAIN_CLIENT_ADDRESS", "myth1service")
-    monkeypatch.setenv("MYTHCHAIN_KEYRING_BACKEND", "file")
-    monkeypatch.setenv("MYTHCHAIN_KEYRING_PASSWORD_FILE", str(password_file))
+def test_native_signing_config_uses_role_specific_secret_file(tmp_path):
+    secret_file = tmp_path / "miner-private-key"
+    secret_file.write_text("11" * 32, encoding="utf-8")
+    config = MythchainConfig.from_env("miner", environ={
+        "MYTHCHAIN_CHAIN_ID": "myth-testnet-1",
+        "MYTHCHAIN_GRPC_ENDPOINT": "grpc+http://127.0.0.1:9090",
+        "MYTHCHAIN_MINER_ADDRESS": "myth1miner",
+        "MYTHCHAIN_MINER_PRIVATE_KEY_FILE": str(secret_file),
+    })
+    assert config.signing_backend == "native"
+    assert config.grpc_endpoint == "grpc+http://127.0.0.1:9090"
+    assert config.private_key_file == str(secret_file)
+    assert config.mnemonic_file == ""
 
-    config_with_secret = MythchainConfig.from_env("client")
-    calls = []
 
-    def runner(command, **kwargs):
-        calls.append((command, kwargs))
-        return result({"txhash": "signed-and-broadcast"})
+def test_native_config_rejects_comet_rpc_as_grpc_endpoint(tmp_path):
+    secret_file = tmp_path / "miner-private-key"
+    secret_file.write_text("11" * 32, encoding="utf-8")
+    with pytest.raises(MythchainError, match="CometBFT tcp"):
+        MythchainConfig.from_env("miner", environ={
+            "MYTHCHAIN_CHAIN_ID": "myth-testnet-1",
+            "MYTHCHAIN_GRPC_ENDPOINT": "tcp://127.0.0.1:26657",
+            "MYTHCHAIN_MINER_ADDRESS": "myth1miner",
+            "MYTHCHAIN_MINER_PRIVATE_KEY_FILE": str(secret_file),
+        })
 
-    MythchainTaskAdapter(config_with_secret, runner=runner)._run(
-        ["tx", "mythprotocol", "register-task"], tx=True
-    )
 
-    command, kwargs = calls[0]
-    assert "service-only-passphrase" not in " ".join(command)
-    assert kwargs["input"] == "service-only-passphrase\n"
+def test_native_client_loads_secret_derives_and_validates_role_address(tmp_path, monkeypatch):
+    from cosmpy.aerial.wallet import LocalWallet
+    from zyra_cmd import mythchain_native
+
+    mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+    mnemonic_file = tmp_path / "client.mnemonic"
+    mnemonic_file.write_text(mnemonic, encoding="utf-8")
+    expected_wallet = LocalWallet.from_mnemonic(mnemonic, prefix="myth")
+
+    class FakeLedger:
+        def __init__(self, network, query_timeout_secs):
+            self.network = network
+            self.query_timeout_secs = query_timeout_secs
+
+        def query_chain_id(self):
+            return "myth-testnet-1"
+
+    monkeypatch.setattr(mythchain_native, "LedgerClient", FakeLedger)
+    config = MythchainConfig.from_env("client", environ={
+        "MYTHCHAIN_CHAIN_ID": "myth-testnet-1",
+        "MYTHCHAIN_GRPC_ENDPOINT": "rest+http://127.0.0.1:1317",
+        "MYTHCHAIN_CLIENT_ADDRESS": str(expected_wallet.address()),
+        "MYTHCHAIN_CLIENT_MNEMONIC_FILE": str(mnemonic_file),
+    })
+
+    client = mythchain_native.NativeMythchainClient(config)
+    assert str(client.wallet.address()) == config.address
+    assert client._rest_endpoint == "http://127.0.0.1:1317"
 
 
 def test_two_competing_miners_only_canonical_owner_gets_lease():
@@ -167,19 +197,157 @@ def test_rpc_connection_refused_is_reported_as_unavailable():
         adapter.query_task("job")
 
 
-def test_role_configuration_requires_explicit_cosmos_key_and_address():
-    with pytest.raises(MythchainError, match="MYTHCHAIN_MINER_KEY"):
+def test_role_configuration_requires_native_key_file_address_and_grpc_endpoint():
+    with pytest.raises(MythchainError, match="MYTHCHAIN_CHAIN_ID"):
         MythchainConfig.from_env("miner", environ={})
 
 
 def test_role_specific_node_and_home_override_shared_defaults():
-    env = {"MYTHCHAIN_MINER_KEY": "miner", "MYTHCHAIN_MINER_ADDRESS": "myth1miner",
+    env = {"MYTHCHAIN_SIGNING_BACKEND": "cli",
+           "MYTHCHAIN_MINER_KEY": "miner", "MYTHCHAIN_MINER_ADDRESS": "myth1miner",
            "MYTHCHAIN_NODE": "tcp://shared:26657", "MYTHCHAIN_HOME": "/shared/home",
            "MYTHCHAIN_MINER_NODE": "tcp://miner-validator:26657",
            "MYTHCHAIN_MINER_HOME": "/miner/home"}
     config = MythchainConfig.from_env("miner", environ=env)
     assert config.node == "tcp://miner-validator:26657"
     assert config.home == "/miner/home"
+
+
+def test_native_claim_signs_custom_proto_and_broadcasts_without_cli():
+    from cosmpy.aerial.types import Account
+    from cosmpy.aerial.wallet import LocalWallet
+    from zyra_cmd.mythchain_native import NativeMythchainClient, _native_messages
+
+    wallet = LocalWallet.from_mnemonic(
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+        prefix="myth",
+    )
+
+    class Submitted:
+        response = SimpleNamespace(hash="native-claim-hash", code=0, raw_log="")
+
+        def wait_to_complete(self, **kwargs):
+            assert kwargs["timeout"].total_seconds() > 0
+            return self
+
+    class Ledger:
+        tx = None
+
+        def query_account(self, address):
+            return Account(address=address, number=8, sequence=11)
+
+        def broadcast_tx(self, transaction):
+            self.tx = transaction.tx
+            return Submitted()
+
+    ledger = Ledger()
+    client = NativeMythchainClient.__new__(NativeMythchainClient)
+    client.config = MythchainConfig(chain_id="myth-testnet-1", address=str(wallet.address()),
+                                    fees="100umtc", timeout=5, gas_limit=500_000)
+    client.wallet = wallet
+    client.ledger = ledger
+    client._messages = _native_messages()
+
+    response = client.run([
+        "tx", "mythprotocol", "claim-task", "--task-id", "task-native",
+        "--acceptance-hash", "a" * 64, "--lease-blocks", "400", "--nonce", "b" * 64,
+    ], tx=True)
+
+    assert response["txhash"] == "native-claim-hash"
+    assert ledger.tx.signatures and len(ledger.tx.signatures[0]) == 64
+    assert ledger.tx.auth_info.signer_infos[0].sequence == 11
+    packed = ledger.tx.body.messages[0]
+    assert packed.type_url == "/mythprotocol.mythprotocol.v1.MsgClaimTask"
+    claim = client._messages["MsgClaimTask"]()
+    packed.Unpack(claim)
+    assert claim.creator == str(wallet.address())
+    assert claim.task_id == "task-native"
+    assert claim.acceptance_hash == "a" * 64
+    assert claim.lease_blocks == 400
+    assert claim.nonce == "b" * 64
+
+
+def test_native_register_includes_weighted_criteria_and_category():
+    from cosmpy.aerial.types import Account
+    from cosmpy.aerial.wallet import LocalWallet
+    from zyra_cmd.mythchain_native import NativeMythchainClient, _native_messages
+
+    wallet = LocalWallet.from_mnemonic(
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+        prefix="myth",
+    )
+
+    class Submitted:
+        response = SimpleNamespace(hash="native-register-hash", code=0, raw_log="")
+
+        def wait_to_complete(self, **kwargs):
+            return self
+
+    class Ledger:
+        tx = None
+
+        def query_account(self, address):
+            return Account(address=address, number=3, sequence=4)
+
+        def broadcast_tx(self, transaction):
+            self.tx = transaction.tx
+            return Submitted()
+
+    ledger = Ledger()
+    client = NativeMythchainClient.__new__(NativeMythchainClient)
+    client.config = MythchainConfig(chain_id="myth-testnet-1", address=str(wallet.address()), timeout=5)
+    client.wallet = wallet
+    client.ledger = ledger
+    client._messages = _native_messages()
+    criteria = '[{"id":"runs","weight":100}]'
+
+    response = client.run([
+        "tx", "mythprotocol", "register-task", "--task-id", "task-native",
+        "--acceptance-hash", "c" * 64, "--criteria-json", criteria,
+        "--task-category", "light",
+    ], tx=True)
+
+    assert response["txhash"] == "native-register-hash"
+    packed = ledger.tx.body.messages[0]
+    assert packed.type_url == "/mythprotocol.mythprotocol.v1.MsgRegisterTask"
+    register = client._messages["MsgRegisterTask"]()
+    packed.Unpack(register)
+    assert register.creator == str(wallet.address())
+    assert register.task_id == "task-native"
+    assert register.acceptance_hash == "c" * 64
+    assert register.criteria_json == criteria
+    assert register.task_category == "light"
+
+
+def test_native_query_decodes_canonical_task_lease():
+    from zyra_cmd.mythchain_native import NativeMythchainClient, _native_messages
+
+    messages = _native_messages()
+    response = messages["QueryTaskLeaseResponse"](found=True)
+    response.lease.task_id = "task-native"
+    response.lease.acceptance_hash = "a" * 64
+    response.lease.miner_address = "myth1miner"
+    response.lease.attempt_id = "b" * 64
+    response.lease.expires_at_height = 700
+    response.lease.status = "LEASED"
+    response.lease.criteria_json = '{"criteria":[]}'
+    response.lease.votes.add(judge_address="myth1judge", verdict="PASS", height=123)
+
+    client = NativeMythchainClient.__new__(NativeMythchainClient)
+    client.config = SimpleNamespace(timeout=3)
+    client._messages = messages
+    client._query_request = messages["QueryTaskLeaseRequest"]
+    client._query_response = messages["QueryTaskLeaseResponse"]
+    client._query_rpc = lambda request, timeout: (
+        response if request.task_id == "task-native" and timeout == 3 else None
+    )
+    client._rest_endpoint = ""
+
+    lease = client._query_task("task-native")
+    assert lease["task_id"] == "task-native"
+    assert lease["expires_at_height"] == "700"
+    assert lease["criteria_json"] == '{"criteria":[]}'
+    assert lease["votes"][0]["judge_address"] == "myth1judge"
 
 
 def test_task_reward_category_maps_difficulty_and_profile_deterministically():

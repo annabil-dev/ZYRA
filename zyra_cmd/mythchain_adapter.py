@@ -1,8 +1,4 @@
-"""Opt-in adapter for canonical Mythchain task registration and miner claims.
-
-This adapter deliberately uses the Mythchain CLI as the signing boundary. It
-does not read or handle Cosmos private keys itself.
-"""
+"""Adapter for canonical Mythchain tasks with native Cosmos transaction signing."""
 
 from __future__ import annotations
 
@@ -96,11 +92,11 @@ def _canonical_criteria_results_json(criteria_json, results):
 
 @dataclass(frozen=True)
 class MythchainConfig:
-    binary: str
-    node: str
-    chain_id: str
-    key_name: str
-    address: str
+    binary: str = ""
+    node: str = ""
+    chain_id: str = ""
+    key_name: str = ""
+    address: str = ""
     lease_blocks: int = 500
     timeout: int = 90
     fees: str = ""
@@ -108,51 +104,107 @@ class MythchainConfig:
     home: str = ""
     wsl_distro: str = ""
     keyring_password: str = ""
+    signing_backend: str = "native"
+    grpc_endpoint: str = ""
+    mnemonic_file: str = ""
+    private_key_file: str = ""
+    gas_limit: int = 1_000_000
 
     @classmethod
     def from_env(cls, role="miner", environ=None):
         env = os.environ if environ is None else environ
         role = role.upper()
-        required = {
-            "binary": env.get("MYTHCHAIN_BINARY", "mythprotocold"),
-            "node": env.get(f"MYTHCHAIN_{role}_NODE",
-                            env.get("MYTHCHAIN_NODE", "tcp://127.0.0.1:26657")),
-            "chain_id": env.get("MYTHCHAIN_CHAIN_ID", "mythprotocol"),
-            "key_name": env.get(f"MYTHCHAIN_{role}_KEY", ""),
-            "address": env.get(f"MYTHCHAIN_{role}_ADDRESS", ""),
-        }
-        missing = [name for name in ("key_name", "address") if not required[name]]
-        if missing:
-            raise MythchainError(f"Missing MYTHCHAIN_{role}_KEY / MYTHCHAIN_{role}_ADDRESS configuration")
+        backend = env.get("MYTHCHAIN_SIGNING_BACKEND", "native").strip().lower()
+        if backend not in {"native", "cli"}:
+            raise MythchainError("MYTHCHAIN_SIGNING_BACKEND must be 'native' or 'cli'")
+        address = env.get(f"MYTHCHAIN_{role}_ADDRESS", "")
+        key_name = env.get(f"MYTHCHAIN_{role}_KEY", "")
+        grpc_endpoint = env.get(
+            f"MYTHCHAIN_{role}_GRPC_ENDPOINT",
+            env.get(f"MYTHCHAIN_{role}_GRPC",
+                    env.get("MYTHCHAIN_GRPC_ENDPOINT", env.get("MYTHCHAIN_GRPC", ""))),
+        )
+        mnemonic_file = env.get(
+            f"MYTHCHAIN_{role}_MNEMONIC_FILE", env.get("MYTHCHAIN_MNEMONIC_FILE", "")
+        )
+        private_key_file = env.get(
+            f"MYTHCHAIN_{role}_PRIVATE_KEY_FILE", env.get("MYTHCHAIN_PRIVATE_KEY_FILE", "")
+        )
+        chain_id = env.get("MYTHCHAIN_CHAIN_ID", "")
+        if backend == "native":
+            missing = [name for name, value in (
+                ("MYTHCHAIN_CHAIN_ID", chain_id),
+                (f"MYTHCHAIN_{role}_ADDRESS", address),
+                (f"MYTHCHAIN_{role}_MNEMONIC_FILE or MYTHCHAIN_{role}_PRIVATE_KEY_FILE",
+                 mnemonic_file or private_key_file),
+                ("MYTHCHAIN_GRPC_ENDPOINT", grpc_endpoint),
+            ) if not value]
+            if missing:
+                raise MythchainError("Missing native Mythchain config: " + ", ".join(missing))
+            if mnemonic_file and private_key_file:
+                raise MythchainError("Set either a mnemonic file or private-key file, not both")
+            if not grpc_endpoint.startswith(("grpc+http://", "grpc+https://",
+                                             "rest+http://", "rest+https://")):
+                raise MythchainError(
+                    "MYTHCHAIN_GRPC_ENDPOINT must be grpc+http(s)://host:9090 or "
+                    "rest+http(s)://host:1317; CometBFT tcp://host:26657 is not a gRPC endpoint"
+                )
+        else:
+            missing = [name for name, value in (
+                (f"MYTHCHAIN_{role}_KEY", key_name),
+                (f"MYTHCHAIN_{role}_ADDRESS", address),
+                ("MYTHCHAIN_BINARY", env.get("MYTHCHAIN_BINARY", "mythprotocold")),
+            ) if not value]
+            if missing:
+                raise MythchainError("Missing legacy CLI Mythchain config: " + ", ".join(missing))
         try:
             lease_blocks = int(env.get("MYTHCHAIN_LEASE_BLOCKS", "500"))
             timeout = int(env.get("MYTHCHAIN_COMMAND_TIMEOUT", "90"))
+            gas_limit = int(env.get("MYTHCHAIN_GAS_LIMIT", "1000000"))
         except ValueError as exc:
-            raise MythchainError("Mythchain lease blocks and command timeout must be integers") from exc
-        if not 1 <= lease_blocks <= 10_000 or timeout < 1:
-            raise MythchainError("MYTHCHAIN_LEASE_BLOCKS must be 1..10000 and timeout must be positive")
+            raise MythchainError("lease blocks, timeout, and gas limit must be integers") from exc
+        if not 1 <= lease_blocks <= 10_000 or timeout < 1 or gas_limit < 1:
+            raise MythchainError("lease blocks, timeout, and gas limit must be positive and valid")
         keyring_password = env.get("MYTHCHAIN_KEYRING_PASSWORD", "")
         password_file = env.get("MYTHCHAIN_KEYRING_PASSWORD_FILE", "")
-        if password_file:
+        if backend == "cli" and password_file:
             try:
                 keyring_password = Path(password_file).read_text(encoding="utf-8").rstrip("\r\n")
             except OSError as exc:
                 raise MythchainError("Could not read MYTHCHAIN_KEYRING_PASSWORD_FILE") from exc
-        return cls(**required, lease_blocks=lease_blocks, timeout=timeout,
+        return cls(
+                   binary=env.get("MYTHCHAIN_BINARY", "mythprotocold"),
+                   node=env.get(f"MYTHCHAIN_{role}_NODE", env.get("MYTHCHAIN_NODE", "")),
+                   chain_id=chain_id, key_name=key_name, address=address,
+                   lease_blocks=lease_blocks, timeout=timeout,
                    fees=env.get("MYTHCHAIN_TX_FEES", ""),
                    keyring_backend=env.get("MYTHCHAIN_KEYRING_BACKEND", "os"),
                    home=env.get(f"MYTHCHAIN_{role}_HOME", env.get("MYTHCHAIN_HOME", "")),
                    wsl_distro=env.get("MYTHCHAIN_WSL_DISTRO", ""),
-                   keyring_password=keyring_password)
+                   keyring_password=keyring_password, signing_backend=backend,
+                   grpc_endpoint=grpc_endpoint, mnemonic_file=mnemonic_file,
+                   private_key_file=private_key_file, gas_limit=gas_limit)
 
 
 class MythchainTaskAdapter:
-    def __init__(self, config, runner=None, sleep=time.sleep):
+    def __init__(self, config, runner=None, sleep=time.sleep, native_client=None):
         self.config = config
-        self.runner = runner or subprocess.run
         self.sleep = sleep
+        self.runner = runner
+        self.native_client = native_client
+        if self.native_client is None and runner is None and config.signing_backend == "native":
+            from zyra_cmd.mythchain_native import NativeMythchainClient
+            self.native_client = NativeMythchainClient(config)
+        if self.native_client is None and runner is None and config.signing_backend != "cli":
+            raise MythchainError("No native Mythchain client was initialized")
 
     def _run(self, args, *, tx=False):
+        if self.native_client is not None:
+            return self.native_client.run(args, tx=tx)
+
+        # Explicit legacy CLI mode is retained for controlled migration and test
+        # injection only; MYTHCHAIN_SIGNING_BACKEND defaults to native.
+        runner = self.runner or subprocess.run
         command = [self.config.binary, *args, "--node", self.config.node, "--output", "json"]
         if self.config.home:
             command.extend(["--home", self.config.home])
@@ -173,7 +225,7 @@ class MythchainTaskAdapter:
                                "timeout": self.config.timeout, "check": False}
                 if tx and self.config.keyring_password:
                     run_options["input"] = self.config.keyring_password + "\n"
-                result = self.runner(command, **run_options)
+                result = runner(command, **run_options)
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise MythchainUnavailable(f"Mythchain CLI/RPC unavailable: {exc}") from exc
             if result.returncode != 0:

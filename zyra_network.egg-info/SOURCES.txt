@@ -106,6 +106,7 @@ zyra_cmd/installer.py
 zyra_cmd/mns_v0.json
 zyra_cmd/mns_v0.py
 zyra_cmd/mythchain_adapter.py
+zyra_cmd/mythchain_native.py
 zyra_cmd/synthetic_producer.py
 zyra_cmd/synthetic_tasks.py
 zyra_cmd/task_dispatch.py

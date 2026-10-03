@@ -31,15 +31,18 @@ def test_failed_miner_releases_and_second_miner_reclaims_local_testnet(tmp_path)
         miner_a_config,
         key_name=os.environ["MYTHCHAIN_SECOND_MINER_KEY"],
         address=os.environ["MYTHCHAIN_SECOND_MINER_ADDRESS"],
-        node=os.environ.get("MYTHCHAIN_SECOND_MINER_NODE", miner_a_config.node),
+        mnemonic_file=os.environ.get("MYTHCHAIN_SECOND_MINER_MNEMONIC_FILE", ""),
+        private_key_file=os.environ.get("MYTHCHAIN_SECOND_MINER_PRIVATE_KEY_FILE", ""),
+        grpc_endpoint=os.environ.get("MYTHCHAIN_SECOND_MINER_GRPC_ENDPOINT",
+                                     miner_a_config.grpc_endpoint),
         home=os.environ.get("MYTHCHAIN_SECOND_MINER_HOME", miner_a_config.home),
     )
     configs = (client_config, miner_a_config, miner_b_config)
     for config in configs:
         if config.chain_id != expected_chain_id:
             pytest.fail(f"Refusing unexpected chain ID {config.chain_id}")
-        if urlparse(config.node).hostname not in {"127.0.0.1", "localhost"}:
-            pytest.fail(f"Refusing non-loopback RPC endpoint {config.node}")
+        if urlparse(config.grpc_endpoint.split("+", 1)[-1]).hostname not in {"127.0.0.1", "localhost"}:
+            pytest.fail(f"Refusing non-loopback Cosmos endpoint {config.grpc_endpoint}")
     if miner_a_config.address == miner_b_config.address:
         pytest.fail("The two Miner service accounts must be distinct")
 
@@ -108,8 +111,13 @@ def test_failed_miner_releases_and_second_miner_reclaims_local_testnet(tmp_path)
         await asyncio.sleep(0.02)
         assert p2p_a.tasks[task_id]["lease"]["miner_identity"] == p2p_wallet_b.signing_address
 
-        states = [MythchainTaskAdapter(dataclasses.replace(client_config, node=node)).query_task(task_id)
-                  for node in ("tcp://127.0.0.1:27657", "tcp://127.0.0.1:27654", "tcp://127.0.0.1:27651")]
+        endpoints = os.environ.get(
+            "MYTHCHAIN_TEST_GRPC_ENDPOINTS",
+            "grpc+http://127.0.0.1:9090,grpc+http://127.0.0.1:9088,grpc+http://127.0.0.1:9086",
+        ).split(",")
+        states = [MythchainTaskAdapter(
+            dataclasses.replace(client_config, grpc_endpoint=endpoint.strip())
+        ).query_task(task_id) for endpoint in endpoints]
         assert all(state and state.get("status") == "LEASED" for state in states)
         assert all(state.get("miner_address") == miner_b_config.address for state in states)
         assert all(state.get("attempt_id") == new_attempt for state in states)

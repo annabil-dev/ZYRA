@@ -13,3 +13,4 @@ python-dotenv>=1.0.0
 prompt_toolkit>=3.0.0
 requests>=2.28.0
 websockets>=10.0
+cosmpy==0.12.2

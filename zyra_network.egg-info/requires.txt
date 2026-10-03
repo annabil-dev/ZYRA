@@ -12,6 +12,7 @@ requests
 websockets
 colorama
 ecdsa<1,>=0.19
+cosmpy==0.12.2
 
 [desktop]
 PySide6>=6.5.0
