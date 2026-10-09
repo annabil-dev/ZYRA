@@ -49,6 +49,12 @@ dotenv.load_dotenv(str(Path(__file__).resolve().parent.parent / '.env'))
 BRIDGE_URL = os.environ.get("ZYRA_BRIDGE_URL", "https://zyra-ai.tail3b049d.ts.net") # Hardcoded Global Bootstrap Node (Mythchain Alpha Tracker)
 
 
+def is_retired_legacy_command(command):
+    """Recognize old EVM-only commands so they never reach runtime handlers."""
+    parts = str(command).strip().lower().split(maxsplit=1)
+    return bool(parts and parts[0] in {"/link", "/claim", "/deploy"})
+
+
 def get_pending_miner_task(tasks, preferred_task_id=None, miner_identity=None, now=None,
                            canonical_mode=False, excluded_task_ids=None):
     """Return (task_id, task) or None; empty mempools are a normal state."""
@@ -303,7 +309,7 @@ def run_automode(llm, initial_task: str, history: list, wallet: ZyraWallet, ledg
             acceptance = make_contract(initial_task)
             if 'p2p_node' in globals():
                 p2p_node.add_task({"task_id": task_id, "prompt": initial_task, "status": "mining",
-                                   "client": wallet.metamask_address or wallet.address,
+                                    "client": wallet.signing_address or wallet.address,
                                    "acceptance": acceptance, "acceptance_hash": contract_hash(acceptance)})
     except Exception as exc:
         print(f"[Runtime] Cannot start task: {exc}")
@@ -798,7 +804,7 @@ print("hello")
             print(f"[Mythchain] Result was not committed; P2P submission stopped: {exc}")
             return False
     
-    target_wallet = wallet.metamask_address if hasattr(wallet, 'metamask_address') and wallet.metamask_address else wallet.address
+    target_wallet = wallet.signing_address or wallet.address
     if not target_wallet:
         target_wallet = wallet.address
         
@@ -965,7 +971,7 @@ try:
         print(f"Validator Wallet: \033[92m{wallet.address}\033[0m")
         print(f"Press \033[91mCtrl+C\033[0m to stop validating.\n")
         
-        target_wallet = wallet.metamask_address if hasattr(wallet, 'metamask_address') and wallet.metamask_address else wallet.address
+        target_wallet = wallet.signing_address or wallet.address
 
         from ai.execution.runtime import ensure_runtime
         from ai.execution.contract import contract_hash
@@ -981,27 +987,6 @@ try:
         except Exception as exc:
             print(f"[Smart Judge] Docker runtime unavailable: {exc}")
             return
-        
-        # --- SYBIL RESISTANCE (STAKING CHECK) ---
-        import os
-        contract_addr = os.environ.get("ZYRA_CONTRACT_ADDRESS")
-        if contract_addr and target_wallet.startswith("0x"):
-            try:
-                from zyra_cmd.web3_bridge import ZyraWeb3Bridge
-                bridge = ZyraWeb3Bridge()
-                bridge.set_contract_address(contract_addr)
-                staked_bal = bridge.get_staked_balance(target_wallet)
-                if staked_bal < 10.0:
-                    print(f"\033[91m[Access Denied]\033[0m You need to stake at least 10 ZYRA to become a Smart Judge.")
-                    print(f"Your current staked balance: {staked_bal:.2f} ZYRA.")
-                    print(f"Use \033[93m/stake 10\033[0m to lock your tokens.\n")
-                    return
-                print(f"\033[92m[Verified]\033[0m Judge Stake Confirmed: {staked_bal:.2f} ZYRA locked.")
-            except Exception as e:
-                print(f"\033[91m[Warning]\033[0m Could not verify staked balance on Celo: {e}")
-        else:
-            print(f"\033[93m[Warning]\033[0m Contract Address or MetaMask not linked. Skipping on-chain stake verification for prototype testing.")
-        # ----------------------------------------
         
         validated_trajs = set()  # Track what we already judged
         
@@ -1127,9 +1112,6 @@ try:
                 ('/read', 'Baca isi file teks (/read <file>)'),
                 ('/search', 'Cari informasi di internet (/search <query>)'),
                 ('/export', 'Simpan riwayat percakapan ke Markdown'),
-                ('/link', 'Hubungkan alamat MetaMask (/link <address>)'),
-                ('/claim', 'Tarik token ZYRA ke dompet Web3 (/claim <amount>)'),
-                ('/stake', 'Stake token ZYRA untuk menjadi Validator (/stake <amount>)'),
                 ('/automode', 'Aktifkan Swarm AI Multi-Model (/automode <task>)'),
                 ('/judge', 'Run as P2P Validator Node'),
                 ('/mine', 'Auto-Mining tugas dari ZYRA Network'),
@@ -1138,18 +1120,19 @@ try:
                 ('/runtime', 'Siapkan Docker runtime miner/judge (Flask + Chromium)'),
                 ('/output', 'Lihat/atur folder hasil task (/output <folder>)'),
                 ('/tasks', 'Lihat status task client dan lokasi hasil tersimpan'),
-                ('/deploy', 'Auto-deploy Smart Contract ke Localhost'),
                 ('/logs', 'Lihat audit log dari tugas sebelumnya'),
                 ('/clear', 'Bersihkan layar terminal dan memori percakapan'),
                 ('/status', 'Alias untuk /sys (Cek Hardware)'),
                 ('/config', 'Konfigurasi Wallet dan Tracker Server'),
-                ('/wallet', 'Lihat saldo ZYRA dan alamat Wallet'),
+                ('/wallet', 'Lihat saldo dan staking Mythchain'),
+                ('/send', 'Kirim MTC/ZYRA native ke akun Mythchain'),
+                ('/stake', 'Delegate MTC ke validator Mythchain'),
+                ('/unstake', 'Undelegate MTC dari validator Mythchain'),
                 ('/submit', 'Lempar tugas coding ke jaringan (Mempool)'),
                 ('/resolve', 'Cari alias .myth pada registry lokal MNS v0'),
                 ('/update', 'Cek dan install update terbaru ZYRA Network'),
                 ('exit', 'Tutup aplikasi ZYRA')
             ]
-
         def get_completions(self, document, complete_event):
             text = document.text_before_cursor
             if text.startswith('/'):
@@ -1285,11 +1268,17 @@ def main():
                     client_monitor.stop()
                     print("\033[93mGoodbye! Keep mining ZYRA.\033[0m")
                     break
+                elif is_retired_legacy_command(cmd):
+                    print("[Legacy] Celo/EVM wallet and contract commands have been retired from the active ZYRA runtime.\n")
+                    continue
                 elif cmd == '/help':
                     print("\n\033[1m[ZYRA Commands]\033[0m")
                     print("  \033[93m/help\033[0m    - Show this help message")
-                    print("  \033[93m/wallet\033[0m  - Show current wallet address and ZYRA balance")
-                    print("  \033[93m/config\033[0m  - Configure Planner Model, EVM Wallet, and Tracker URL")
+                    print("  \033[93m/wallet\033[0m  - Show local and Mythchain balances/staking positions")
+                    print("  \033[93m/send <amount> <MTC|ZYRA> <myth1...>\033[0m - Send native Mythchain coins")
+                    print("  \033[93m/stake <MTC> <mythvaloper1...>\033[0m - Delegate MTC to a validator")
+                    print("  \033[93m/unstake <MTC> <mythvaloper1...>\033[0m - Start MTC undelegation")
+                    print("  \033[93m/config\033[0m  - Configure Planner Model and Tracker URL")
                     print("  \033[93m/clear\033[0m   - Clear terminal screen and conversation history")
                     print("  \033[93m/model\033[0m   - Change active LLM model (e.g., /model llama3.2)")
                     print("  \033[93m/sys\033[0m     - Monitor hardware (CPU & RAM usage)")
@@ -1307,9 +1296,7 @@ def main():
                     print("  \033[93m/export\033[0m  - Save current chat history to a Markdown file")
                     print("  \033[93m/logs\033[0m    - Open the most recent PoUW Swarm Audit Log")
                     print("  \033[93m/judge\033[0m   - Run as P2P Validator Node")
-                    print("  \033[93m/link\033[0m    - Link your MetaMask address (e.g., /link 0x...)")
-                    print("  \033[93m/claim\033[0m   - Claim ZYRA tokens to your linked MetaMask")
-                    print("  \033[93m/stake\033[0m   - Stake ZYRA tokens to become a Validator (requires CELO gas)")
+                    print("  Legacy EVM/Celo wallet and contract commands are retired")
                     print("  \033[93m/update\033[0m  - Cek dan install update terbaru")
                     print("  \033[93mexit\033[0m     - Exit the CLI\n")
                     continue
@@ -1420,22 +1407,101 @@ os.system("start cmd /k zyra")
                 elif cmd in ['/wallet', '/balance']:
                     balance = ledger.get_balance(wallet.address)
                     print(f"\n\033[1m[Wallet Info]\033[0m")
-                    print(f"Address: \033[96m{wallet.address}\033[0m")
-                    print(f"Local Offline Balance: \033[92m{balance:.4f} ZYRA\033[0m")
-                    if wallet.metamask_address:
-                        print(f"Linked Web3: \033[95m{wallet.metamask_address}\033[0m")
-                        # Fetch Web3 balance
-                        try:
-                            from zyra_cmd.web3_bridge import ZyraWeb3Bridge
-                            bridge = ZyraWeb3Bridge()
-                            contract_addr = os.environ.get("ZYRA_CONTRACT_ADDRESS")
-                            if contract_addr:
-                                bridge.set_contract_address(contract_addr)
-                                w3_balance = bridge.get_balance(wallet.metamask_address)
-                                print(f"Web3 Balance (Celo): \033[92m{w3_balance:.4f} ZYRA\033[0m")
-                        except Exception as e:
-                            pass
+                    print(f"Local wallet: \033[96m{wallet.address}\033[0m")
+                    print(f"Local ledger only (not Mythchain): \033[90m{balance:.4f} ZYRA\033[0m")
+                    try:
+                        from zyra_cmd.mythchain_balance import format_micro_units, query_wallet_state
+                        role, chain_config, balances, staking, staking_error = query_wallet_state()
+                        print(f"Mythchain account ({role}): \033[96m{chain_config.address}\033[0m")
+                        print(f"Chain ID: {chain_config.chain_id}")
+                        for denom, symbol in (("umtc", "MTC"), ("uzyra", "ZYRA")):
+                            amount = balances.get(denom, 0)
+                            print(f"{symbol}: \033[92m{format_micro_units(amount)}\033[0m ({amount} {denom})")
+                        other_balances = {denom: amount for denom, amount in balances.items()
+                                          if denom not in {"umtc", "uzyra"}}
+                        for denom, amount in sorted(other_balances.items()):
+                            print(f"{denom}: {amount}")
+                        if staking is not None:
+                            print("Delegations:")
+                            if staking["delegations"]:
+                                for position in staking["delegations"]:
+                                    amount = position["amount_umtc"]
+                                    reward = position["rewards_umtc"]
+                                    print(f"  {position['validator']}: {format_micro_units(amount)} MTC delegated; "
+                                          f"{format_micro_units(reward)} MTC staking rewards")
+                            else:
+                                print("  none")
+                            print("Unbonding:")
+                            if staking["unbonding"]:
+                                for position in staking["unbonding"]:
+                                    amount = position["amount_umtc"]
+                                    print(f"  {position['validator']}: {format_micro_units(amount)} MTC pending")
+                            else:
+                                print("  none")
+                        elif staking_error:
+                            print(f"[Mythchain] Staking positions unavailable: {staking_error}")
+                    except Exception as exc:
+                        print(f"[Mythchain] On-chain balance unavailable: {exc}")
                     print()
+                    continue
+                elif cmd == '/send' or cmd.startswith('/send '):
+                    parts = user_input.split()
+                    if len(parts) != 4:
+                        print("Usage: /send <amount> <MTC|ZYRA> <myth1...>\n")
+                        continue
+                    try:
+                        from zyra_cmd.mythchain_balance import (
+                            create_native_wallet_client, parse_native_denom,
+                            parse_token_amount, validate_mythchain_address,
+                        )
+                        amount = parse_token_amount(parts[1])
+                        denom = parse_native_denom(parts[2])
+                        destination = validate_mythchain_address(parts[3])
+                        role, chain_config, native_client = create_native_wallet_client()
+                        result = native_client.send_bank_tokens(destination, amount, denom)
+                        print(f"[Mythchain] Sent {parts[1]} {denom[1:].upper()} from {chain_config.address}.")
+                        print(f"[Mythchain] TxHash: {result['txhash']}\n")
+                    except Exception as exc:
+                        print(f"[Mythchain] Bank send failed: {exc}\n")
+                    continue
+                elif cmd == '/stake' or cmd.startswith('/stake '):
+                    parts = user_input.split()
+                    if len(parts) != 3:
+                        print("Usage: /stake <MTC> <mythvaloper1...>\n")
+                        continue
+                    try:
+                        from zyra_cmd.mythchain_balance import (
+                            create_native_wallet_client, parse_token_amount,
+                            validate_mythchain_address,
+                        )
+                        amount = parse_token_amount(parts[1])
+                        validator = validate_mythchain_address(parts[2], validator=True)
+                        _role, _chain_config, native_client = create_native_wallet_client()
+                        result = native_client.delegate_mtc(validator, amount)
+                        print(f"[Mythchain] Delegated {parts[1]} MTC to {validator}.")
+                        print(f"[Mythchain] TxHash: {result['txhash']}\n")
+                    except Exception as exc:
+                        print(f"[Mythchain] MTC delegation failed: {exc}\n")
+                    continue
+                elif cmd == '/unstake' or cmd.startswith('/unstake '):
+                    parts = user_input.split()
+                    if len(parts) != 3:
+                        print("Usage: /unstake <MTC> <mythvaloper1...>\n")
+                        continue
+                    try:
+                        from zyra_cmd.mythchain_balance import (
+                            create_native_wallet_client, parse_token_amount,
+                            validate_mythchain_address,
+                        )
+                        amount = parse_token_amount(parts[1])
+                        validator = validate_mythchain_address(parts[2], validator=True)
+                        _role, _chain_config, native_client = create_native_wallet_client()
+                        result = native_client.undelegate_mtc(validator, amount)
+                        print(f"[Mythchain] Undelegation of {parts[1]} MTC started for {validator}.")
+                        print("Tokens follow the chain's unbonding period; they are not liquid immediately.")
+                        print(f"[Mythchain] TxHash: {result['txhash']}\n")
+                    except Exception as exc:
+                        print(f"[Mythchain] MTC undelegation failed: {exc}\n")
                     continue
                 elif cmd == '/clear':
                     os.system('cls' if os.name == 'nt' else 'clear')
@@ -1521,7 +1587,6 @@ os.system("start cmd /k zyra")
                 elif user_input == '/config':
                     print("\033[94m[ZYRA Config]\033[0m")
                     model = input("\033[90mSelect Local Planner Model (e.g. llama3.1:8b): \033[0m")
-                    addr = input("\033[90mEnter EVM Wallet Address: \033[0m")
                     bridge = input("\033[90mEnter Tracker Server URL (default: https://zyra-ai.tail3b049d.ts.net): \033[0m")
                     
                     global_env_dir = Path.home() / ".zyra"
@@ -1530,132 +1595,11 @@ os.system("start cmd /k zyra")
                     
                     with open(env_file, "w") as f:
                         if model: f.write(f"PLANNER_MODEL={model}\n")
-                        if addr: f.write(f"WALLET_ADDRESS={addr}\n")
                         if bridge: 
                             f.write(f"ZYRA_BRIDGE_URL={bridge}\n")
                             BRIDGE_URL = bridge
                     
                     print(f"\033[92m✓ Configuration securely saved to {env_file}\033[0m\n")
-                    continue
-                elif user_input.startswith('/link '):
-                    addr = user_input.split(' ', 1)[1].strip()
-                    if addr.startswith('0x') and len(addr) == 42:
-                        wallet.metamask_address = addr
-                        wallet.save()
-                        print(f"\033[92m[System]\033[0m Successfully linked MetaMask address: \033[95m{addr}\033[0m\n")
-                    else:
-                        print(f"\033[91m[Error]\033[0m Invalid Ethereum address format.\n")
-                    continue
-                elif user_input.startswith('/claim'):
-                    parts = user_input.split()
-                    if len(parts) < 2:
-                        print("\033[91m[Error]\033[0m Usage: /claim <amount>\n")
-                        continue
-                    try:
-                        amount = float(parts[1])
-                        if amount <= 0:
-                            print("\033[91m[Error]\033[0m Amount must be positive.\n")
-                            continue
-                            
-                        if not wallet.metamask_address:
-                            print("\033[91m[Error]\033[0m No MetaMask address linked! Use \033[93m/link <0x_address>\033[0m first.\n")
-                            continue
-                            
-                        balance = ledger.get_balance(wallet.address)
-                        if balance < amount:
-                            print(f"\033[91m[Error]\033[0m Insufficient SQLite balance! You have {balance:.4f} ZYRA.\n")
-                            continue
-                            
-                        print(f"\033[94m[System]\033[0m Initiating Web3 Bridge to mint {amount} ZYRA...")
-                        
-                        try:
-                            from zyra_cmd.web3_bridge import ZyraWeb3Bridge
-                            bridge = ZyraWeb3Bridge()
-                            
-                            # Read contract address from env
-                            contract_addr = os.environ.get("ZYRA_CONTRACT_ADDRESS")
-                            if not contract_addr:
-                                print("\033[91m[Error]\033[0m ZYRA_CONTRACT_ADDRESS tidak ditemukan di .env!\n")
-                                continue
-                                
-                            bridge.set_contract_address(contract_addr)
-                            
-                            tx_hash = bridge.mint_reward(wallet.metamask_address, amount)
-                            
-                            # Deduct from ledger
-                            ledger.add_withdraw_transaction(wallet.address, amount, tx_hash)
-                            
-                            print(f"\033[92m[System]\033[0m Claim successful! Tokens minted to {wallet.metamask_address}")
-                            print(f"\033[96m[TxHash]\033[0m {tx_hash}\n")
-                            
-                        except Exception as e:
-                            print(f"\033[91m[Web3 Error]\033[0m {e}\n")
-                            print("Make sure you have run 'npx hardhat run scripts/deploy.js --network localhost'")
-                    except ValueError:
-                        print("\033[91m[Error]\033[0m Invalid amount.\n")
-                    continue
-                elif user_input.startswith('/stake '):
-                    parts = user_input.split(' ', 1)
-                    if len(parts) < 2:
-                        print("\033[91m[Error]\033[0m Usage: /stake <amount>\n")
-                        continue
-                    try:
-                        amount = float(parts[1].strip())
-                        if amount <= 0:
-                            print("\033[91m[Error]\033[0m Amount must be positive.\n")
-                            continue
-                            
-                        print(f"\033[94m[System]\033[0m Initiating Staking transaction for {amount} ZYRA...")
-                        try:
-                            from zyra_cmd.web3_bridge import ZyraWeb3Bridge
-                            bridge = ZyraWeb3Bridge()
-                            
-                            contract_addr = os.environ.get("ZYRA_CONTRACT_ADDRESS")
-                            if not contract_addr:
-                                print("\033[91m[Error]\033[0m ZYRA_CONTRACT_ADDRESS tidak ditemukan di .env!\n")
-                                continue
-                                
-                            bridge.set_contract_address(contract_addr)
-                            # Assuming CLI's wallet private_key is an EVM private key funded with CELO
-                            tx_hash = bridge.stake(wallet.private_key, amount)
-                            
-                            print(f"\033[92m[System]\033[0m Staking successful! You can now run /judge")
-                            print(f"\033[96m[TxHash]\033[0m {tx_hash}\n")
-                        except Exception as e:
-                            print(f"\033[91m[Web3 Error]\033[0m {e}\n(Pastikan wallet EVM anda {wallet.metamask_address or 'lokal'} memiliki saldo CELO untuk gas)\n")
-                    except ValueError:
-                        print("\033[91m[Error]\033[0m Invalid amount.\n")
-                    continue
-                elif user_input.startswith('/unstake '):
-                    parts = user_input.split(' ', 1)
-                    if len(parts) < 2:
-                        print("\033[91m[Error]\033[0m Usage: /unstake <amount>\n")
-                        continue
-                    try:
-                        amount = float(parts[1].strip())
-                        if amount <= 0:
-                            print("\033[91m[Error]\033[0m Amount must be positive.\n")
-                            continue
-                            
-                        print(f"\033[94m[System]\033[0m Initiating Unstaking transaction for {amount} ZYRA...")
-                        try:
-                            from zyra_cmd.web3_bridge import ZyraWeb3Bridge
-                            bridge = ZyraWeb3Bridge()
-                            
-                            contract_addr = os.environ.get("ZYRA_CONTRACT_ADDRESS")
-                            if not contract_addr:
-                                print("\033[91m[Error]\033[0m ZYRA_CONTRACT_ADDRESS tidak ditemukan di .env!\n")
-                                continue
-                                
-                            bridge.set_contract_address(contract_addr)
-                            tx_hash = bridge.unstake(wallet.private_key, amount)
-                            
-                            print(f"\033[92m[System]\033[0m Unstaking successful!")
-                            print(f"\033[96m[TxHash]\033[0m {tx_hash}\n")
-                        except Exception as e:
-                            print(f"\033[91m[Web3 Error]\033[0m {e}\n(Pastikan wallet EVM anda memiliki saldo CELO untuk gas)\n")
-                    except ValueError:
-                        print("\033[91m[Error]\033[0m Invalid amount.\n")
                     continue
                 elif user_input.startswith('/automode '):
                     if llm is None:
@@ -1709,38 +1653,6 @@ os.system("start cmd /k zyra")
                         print("Riwayat tersimpan. Setelah restart, ZYRA akan melanjutkan pemantauan. Cek /tasks.\n")
                     except Exception as e:
                         print(f"\033[91m[Error]\033[0m Gagal submit ke P2P: {e}\n")
-                    continue
-                elif cmd == '/deploy':
-                    print("\n\033[93m[System]\033[0m Starting Auto-Deploy to Localhost...")
-                    blockchain_dir = Path(__file__).resolve().parent.parent / 'blockchain'
-                    if not blockchain_dir.exists():
-                        print("\033[91m[Error]\033[0m 'blockchain' directory not found!\n")
-                        continue
-                        
-                    try:
-                        import subprocess, re, dotenv
-                        print("\033[96m[Deploy]\033[0m Running: npx hardhat run scripts/deploy.js --network localhost")
-                        # We use shell=True on Windows so 'npx' resolves correctly
-                        process = subprocess.run("npx hardhat run scripts/deploy.js --network localhost", shell=True, cwd=str(blockchain_dir), capture_output=True, text=True)
-                        if process.returncode != 0:
-                            print(f"\033[91m[Deploy Error]\033[0m\n{process.stdout}\n{process.stderr}\n")
-                            continue
-                            
-                        stdout = process.stdout
-                        print(f"\n\033[92m[Deploy Success]\033[0m\n{stdout}")
-                        
-                        match = re.search(r"(0x[a-fA-F0-9]{40})", stdout)
-                        if match:
-                            new_addr = match.group(1)
-                            print(f"\033[95m[System]\033[0m Captured new contract address: \033[96m{new_addr}\033[0m")
-                            env_path = Path(__file__).resolve().parent.parent / '.env'
-                            dotenv.set_key(str(env_path), "ZYRA_CONTRACT_ADDRESS", new_addr)
-                            os.environ["ZYRA_CONTRACT_ADDRESS"] = new_addr
-                            print("\033[92m[System]\033[0m Successfully updated .env file! ZYRA is ready to claim.\n")
-                        else:
-                            print("\033[91m[Error]\033[0m Could not extract 0x... address from output.\n")
-                    except Exception as e:
-                        print(f"\033[91m[Error]\033[0m Exception during deploy: {e}\n")
                     continue
                 elif cmd == '/models':
                     import urllib.request, json, subprocess
@@ -1796,7 +1708,7 @@ os.system("start cmd /k zyra")
                         continue
                     print("\n\033[93m[Miner]\033[0m Starting ZYRA Auto-Miner...")
                     print("\033[96m[System]\033[0m Press Ctrl+C to stop mining.\n")
-                    target_wallet = wallet.metamask_address if hasattr(wallet, 'metamask_address') and wallet.metamask_address else wallet.address
+                    target_wallet = wallet.signing_address or wallet.address
                     if not target_wallet: target_wallet = wallet.address
 
                     last_miner_status = None

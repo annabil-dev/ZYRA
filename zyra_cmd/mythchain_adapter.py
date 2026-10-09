@@ -111,7 +111,7 @@ class MythchainConfig:
     gas_limit: int = 1_000_000
 
     @classmethod
-    def from_env(cls, role="miner", environ=None):
+    def from_env(cls, role="miner", environ=None, *, query_only=False):
         env = os.environ if environ is None else environ
         role = role.upper()
         backend = env.get("MYTHCHAIN_SIGNING_BACKEND", "native").strip().lower()
@@ -131,7 +131,21 @@ class MythchainConfig:
             f"MYTHCHAIN_{role}_PRIVATE_KEY_FILE", env.get("MYTHCHAIN_PRIVATE_KEY_FILE", "")
         )
         chain_id = env.get("MYTHCHAIN_CHAIN_ID", "")
-        if backend == "native":
+        if query_only:
+            missing = [name for name, value in (
+                ("MYTHCHAIN_CHAIN_ID", chain_id),
+                (f"MYTHCHAIN_{role}_ADDRESS", address),
+                ("MYTHCHAIN_GRPC_ENDPOINT", grpc_endpoint),
+            ) if not value]
+            if missing:
+                raise MythchainError("Missing Mythchain query config: " + ", ".join(missing))
+            if not grpc_endpoint.startswith(("grpc+http://", "grpc+https://",
+                                             "rest+http://", "rest+https://")):
+                raise MythchainError(
+                    "MYTHCHAIN_GRPC_ENDPOINT must be grpc+http(s)://host:9090 or "
+                    "rest+http(s)://host:1317; CometBFT tcp://host:26657 is not a gRPC endpoint"
+                )
+        elif backend == "native":
             missing = [name for name, value in (
                 ("MYTHCHAIN_CHAIN_ID", chain_id),
                 (f"MYTHCHAIN_{role}_ADDRESS", address),
@@ -142,6 +156,7 @@ class MythchainConfig:
             if missing:
                 raise MythchainError("Missing native Mythchain config: " + ", ".join(missing))
             if mnemonic_file and private_key_file:
+                print(f"DEBUG: mnemonic={repr(mnemonic_file)}, privkey={repr(private_key_file)}")
                 raise MythchainError("Set either a mnemonic file or private-key file, not both")
             if not grpc_endpoint.startswith(("grpc+http://", "grpc+https://",
                                              "rest+http://", "rest+https://")):

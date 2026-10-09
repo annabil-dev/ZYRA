@@ -6,7 +6,8 @@ from zyra_cmd.task_dispatch import dispatch_client_task
 
 class FakeWallet:
     address = "zyra-client-test"
-    metamask_address = None
+    signing_address = "myth1-client-test"
+    metamask_address = "0x" + "12" * 20
 
 
 class FakeClientState:
@@ -61,6 +62,7 @@ def test_synthetic_dispatch_persists_and_broadcasts_through_client_path(monkeypa
     assert client_state.tasks == [task]
     assert p2p_node.tasks == [task]
     assert task["lease_mode"] == "p2p-advisory"
+    assert task["client"] == "myth1-client-test"
 
 
 def test_dispatch_registers_on_required_chain_before_p2p_broadcast(monkeypatch):
@@ -68,6 +70,7 @@ def test_dispatch_registers_on_required_chain_before_p2p_broadcast(monkeypatch):
 
     monkeypatch.setenv("ZYRA_MYTHCHAIN_MODE", "required")
     events = []
+    registrations = []
 
     class OrderedState(FakeClientState):
         def add_task(self, task):
@@ -82,17 +85,30 @@ def test_dispatch_registers_on_required_chain_before_p2p_broadcast(monkeypatch):
     class FakeAdapter:
         def register_task(self, task_id, acceptance_hash, **kwargs):
             events.append("chain-register")
+            registrations.append((task_id, acceptance_hash, kwargs))
 
     monkeypatch.setattr(adapter_module.MythchainConfig, "from_env", lambda role: role)
     monkeypatch.setattr(adapter_module, "MythchainTaskAdapter", lambda _config: FakeAdapter())
 
+    from ai.execution.contract import parse_submission
+    _prompt, acceptance = parse_submission(
+        "Create a small Python CLI that adds two integers and has unit tests."
+    )
     task, _ = dispatch_client_task(
-        "Run a local test task.", make_contract("local CLI task"), FakeWallet(),
-        OrderedState(), OrderedP2P(), metadata={"origin": "synthetic", "profile": "python"},
+        "Run a local test task.", acceptance, FakeWallet(),
+        OrderedState(), OrderedP2P(),
+        metadata={"origin": "synthetic", "difficulty": acceptance.get("difficulty"),
+                  "profile": acceptance["profile"]},
     )
 
     assert events == ["chain-register", "persist", "broadcast"]
     assert task["lease_mode"] == "mythchain"
+    assert task["reward_category"] == "light"
+    assert acceptance["criteria"]
+    assert registrations[0][2] == {
+        "criteria": acceptance["criteria"], "difficulty": acceptance.get("difficulty"),
+        "profile": acceptance["profile"],
+    }
 
 
 def test_dispatch_retries_same_task_id_without_duplicate_local_history(monkeypatch):

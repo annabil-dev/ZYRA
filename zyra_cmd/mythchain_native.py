@@ -26,6 +26,59 @@ from zyra_cmd.mythchain_adapter import MythchainError, MythchainUnavailable
 
 _PACKAGE = "mythprotocol.mythprotocol.v1"
 _FILE = "zyra_mythprotocol_native.proto"
+MYTHCHAIN_DISPLAY_DENOMS = {"umtc": "MTC", "uzyra": "ZYRA"}
+MICRO_DENOM_SCALE = 1_000_000
+
+
+class NativeMythchainQueryClient:
+    """Read public Cosmos bank state without loading a signing key."""
+
+    def __init__(self, config, ledger_client_factory=None):
+        self.config = config
+        try:
+            network = NetworkConfig(
+                chain_id=config.chain_id,
+                fee_minimum_gas_price=0,
+                fee_denomination="umtc",
+                staking_denomination="umtc",
+                url=config.grpc_endpoint,
+            )
+            factory = ledger_client_factory or LedgerClient
+            self.ledger = factory(network, query_timeout_secs=config.timeout)
+            actual_chain_id = self.ledger.query_chain_id()
+        except Exception as exc:
+            raise MythchainUnavailable(f"Could not query Mythchain endpoint: {exc}") from exc
+        if actual_chain_id != config.chain_id:
+            raise MythchainError(
+                f"Configured chain ID {config.chain_id!r} does not match endpoint chain ID "
+                f"{actual_chain_id!r}"
+            )
+
+    def query_bank_balances(self, address=None):
+        account = address or self.config.address
+        try:
+            coins = self.ledger.query_bank_all_balances(Address(account))
+            return {coin.denom: int(coin.amount) for coin in coins}
+        except Exception as exc:
+            raise MythchainUnavailable(f"Could not query bank balances for {account}: {exc}") from exc
+
+    def query_staking_summary(self, address=None):
+        account = address or self.config.address
+        try:
+            summary = self.ledger.query_staking_summary(Address(account))
+            return {
+                "delegations": [{
+                    "validator": str(position.validator),
+                    "amount_umtc": int(position.amount),
+                    "rewards_umtc": int(position.reward),
+                } for position in summary.current_positions],
+                "unbonding": [{
+                    "validator": str(position.validator),
+                    "amount_umtc": int(position.amount),
+                } for position in summary.unbonding_positions],
+            }
+        except Exception as exc:
+            raise MythchainUnavailable(f"Could not query staking positions for {account}: {exc}") from exc
 
 
 def _field(message, name, number, field_type, *, repeated=False, type_name=""):
@@ -318,26 +371,67 @@ class NativeMythchainClient:
 
     def _broadcast(self, message):
         from cosmpy.aerial.tx import SigningCfg, Transaction, TxFee
+        from cosmpy.aerial.exceptions import BroadcastError
+
+        account = self.ledger.query_account(self.wallet.address())
+        seq = account.sequence
+        for _ in range(5):
+            try:
+                transaction = Transaction()
+                transaction.add_message(message)
+                transaction.seal(
+                    SigningCfg.direct(self.wallet.public_key(), seq),
+                    fee=TxFee(amount=self.config.fees or None, gas_limit=self.config.gas_limit),
+                )
+                transaction.sign(
+                    self.wallet.signer(), self.config.chain_id, account.number, deterministic=True
+                )
+                transaction.complete()
+                submitted = self.ledger.broadcast_tx(transaction)
+                completed = submitted.wait_to_complete(
+                    timeout=timedelta(seconds=self.config.timeout),
+                    poll_period=timedelta(seconds=1),
+                )
+                response = completed.response
+                return {"txhash": response.hash, "code": response.code, "raw_log": response.raw_log}
+            except BroadcastError as exc:
+                if 'incorrect account sequence' in str(exc).lower():
+                    print(f"Retrying sequence {seq} due to {exc}")
+                    seq += 1
+                    import time; time.sleep(1)
+                    continue
+                raise MythchainError(f"Native Cosmos transaction failed: {exc}") from exc
+            except grpc.RpcError as exc:
+                raise self._rpc_error(exc) from exc
+            except Exception as exc:
+                detail = str(exc)
+                if any(marker in detail.lower() for marker in (
+                    "connection refused", "unavailable", "deadline exceeded", "timed out",
+                )):
+                    raise MythchainUnavailable(f"Native Cosmos transaction failed: {detail}") from exc
+                raise MythchainError(f"Native Cosmos transaction failed: {detail}") from exc
+        raise MythchainError("Failed after 5 sequence retries")
+
+    def _complete_ledger_transaction(self, label, submit):
+        from cosmpy.aerial.tx import TxFee
 
         try:
-            account = self.ledger.query_account(self.wallet.address())
-            transaction = Transaction()
-            transaction.add_message(message)
-            transaction.seal(
-                SigningCfg.direct(self.wallet.public_key(), account.sequence),
-                fee=TxFee(amount=self.config.fees or None, gas_limit=self.config.gas_limit),
-            )
-            transaction.sign(
-                self.wallet.signer(), self.config.chain_id, account.number, deterministic=True
-            )
-            transaction.complete()
-            submitted = self.ledger.broadcast_tx(transaction)
+            submitted = submit(TxFee(
+                amount=self.config.fees or None,
+                gas_limit=self.config.gas_limit,
+            ))
             completed = submitted.wait_to_complete(
                 timeout=timedelta(seconds=self.config.timeout),
                 poll_period=timedelta(seconds=1),
             )
             response = completed.response
-            return {"txhash": response.hash, "code": response.code, "raw_log": response.raw_log}
+            code = int(getattr(response, "code", 0) or 0)
+            raw_log = getattr(response, "raw_log", "") or ""
+            if code:
+                raise MythchainError(f"Mythchain {label} failed ({code}): {raw_log}")
+            return {"txhash": getattr(response, "hash", ""), "code": code, "raw_log": raw_log}
+        except MythchainError:
+            raise
         except grpc.RpcError as exc:
             raise self._rpc_error(exc) from exc
         except Exception as exc:
@@ -345,8 +439,32 @@ class NativeMythchainClient:
             if any(marker in detail.lower() for marker in (
                 "connection refused", "unavailable", "deadline exceeded", "timed out",
             )):
-                raise MythchainUnavailable(f"Native Cosmos transaction failed: {detail}") from exc
-            raise MythchainError(f"Native Cosmos transaction failed: {detail}") from exc
+                raise MythchainUnavailable(f"Mythchain {label} failed: {detail}") from exc
+            raise MythchainError(f"Mythchain {label} failed: {detail}") from exc
+
+    def send_bank_tokens(self, destination, amount, denom):
+        return self._complete_ledger_transaction(
+            "bank send",
+            lambda fee: self.ledger.send_tokens(
+                Address(destination), int(amount), denom, self.wallet, fee=fee,
+            ),
+        )
+
+    def delegate_mtc(self, validator, amount):
+        return self._complete_ledger_transaction(
+            "MTC delegation",
+            lambda fee: self.ledger.delegate_tokens(
+                Address(validator), int(amount), self.wallet, fee=fee,
+            ),
+        )
+
+    def undelegate_mtc(self, validator, amount):
+        return self._complete_ledger_transaction(
+            "MTC undelegation",
+            lambda fee: self.ledger.undelegate_tokens(
+                Address(validator), int(amount), self.wallet, fee=fee,
+            ),
+        )
 
     def run(self, args, *, tx=False):
         """Execute the adapter's internal query/tx operation without a daemon binary."""

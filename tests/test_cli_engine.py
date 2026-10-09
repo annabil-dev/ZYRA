@@ -16,6 +16,17 @@ def test_zyra_data_dir_can_isolate_node_wallets_without_changing_python_appdata(
     assert get_zyra_data_dir({"APPDATA": appdata, "ZYRA_DATA_DIR": custom}) == os.path.abspath(custom)
 
 
+def test_retired_evm_commands_are_recognized_without_blocking_native_wallet_commands():
+    from zyra_cmd.zyra_cli import is_retired_legacy_command
+
+    assert is_retired_legacy_command("/link 0xabc")
+    assert is_retired_legacy_command("/claim 10")
+    assert is_retired_legacy_command("/deploy")
+    assert not is_retired_legacy_command("/stake 2 mythvaloper1validator")
+    assert not is_retired_legacy_command("/unstake 1 mythvaloper1validator")
+    assert not is_retired_legacy_command("/send 2 MTC myth1recipient")
+
+
 def missing_ollama(*args, **kwargs):
     raise FileNotFoundError("ollama")
 
@@ -68,6 +79,7 @@ def test_client_repl_engine_output_submit_and_history(tmp_path, monkeypatch, cap
     from pathlib import Path
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setenv("ZYRA_MYTHCHAIN_MODE", "off")
     monkeypatch.chdir(tmp_path)
     from zyra_cmd import zyra_cli
     from p2p import network

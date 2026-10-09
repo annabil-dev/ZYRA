@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: zyra-network
-Version: 2.1.66
+Version: 2.1.67
 Summary: A powerful, self-organizing decentralized AI network client.
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
@@ -11,7 +11,6 @@ Requires-Dist: httpx
 Requires-Dist: openai
 Requires-Dist: pyautogui
 Requires-Dist: duckduckgo-search
-Requires-Dist: web3>=6.0.0
 Requires-Dist: python-dotenv
 Requires-Dist: prompt_toolkit>=3.0.0
 Requires-Dist: requests
@@ -34,7 +33,7 @@ A powerful, self-organizing decentralized AI network client and terminal-based A
 - **ZYRA CLI (`zyra_cmd/zyra_cli.py`):** Interactive terminal assistant with autonomous tool-calling, multi-model support, and P2P networking.
 - **P2P Gossip Network (`p2p/`):** Decentralized node communication for task broadcasting and consensus.
 - **Proof-of-Useful-Work (PoUW):** Consensus mechanism where AI Miner nodes execute tasks and Smart Judges validate trajectories deterministically.
-- **Blockchain Integration (`blockchain/` & `mythchain/`):** EVM tokenomics (Celo/Hardhat) and sovereign Cosmos SDK L1 roadmap (MythChain).
+- **Blockchain Integration (`mythchain/`):** Mythchain Cosmos L1 is canonical for task registration, claims, results, and votes. Celo/Hardhat integration is retired from the active runtime.
 - **AI Research (`ai/`):** Scratch-built Transformer architecture and training framework.
 
 ## 📦 Installation & Setup
@@ -169,9 +168,10 @@ For Mythchain tasks, registration commits the weighted rubric; each Cosmos Judge
 vote includes its per-criterion result JSON. The weighted adapter first shipped in
 v2.1.62; v2.1.65 adds the unattended synthetic producer. **ZYRA 2.1.66** adds native
 Cosmos `SIGN_MODE_DIRECT` signing through CosmPy, so Client/Miner/Judge processes no
-longer require a `mythprotocold` executable or WSL. Required-chain Miners still use
-P2P for discovery, but Mythchain decides every claim. Local P2P voting and canonical
-L1 Judge quorum are separate; query Mythchain for final task status.
+longer require a `mythprotocold` executable or WSL. **ZYRA 2.1.67** removes Web3 from
+the package dependencies and retires the legacy EVM bridge from the active runtime. Required-chain
+Miners still use P2P for discovery, but Mythchain decides every claim. Local P2P voting
+and canonical L1 Judge quorum are separate; query Mythchain for final task status.
 
 Native signing uses an explicit Cosmos gRPC or REST endpoint and a protected,
 role-specific mnemonic/private-key file. Example for a Windows Miner:
@@ -189,6 +189,30 @@ $env:MYTHCHAIN_TX_FEES = "<FEE_AMOUNT>umtc"
 gRPC service (commonly port 9090) or REST API (commonly port 1317 when enabled). Keep
 the private-key/mnemonic file readable only by the ZYRA role account; never put the
 secret in command-line arguments, a P2P message, or source control.
+
+`/wallet` queries the selected role's native `umtc` and `uzyra` balances through the
+Cosmos Bank query service; this read-only query does not load a signing key. Set
+`MYTHCHAIN_WALLET_ROLE=client`, `miner`, or `judge` when multiple role addresses are
+configured in one process. The separately displayed local SQLite ledger is not an
+on-chain balance.
+
+Native wallet commands use human token amounts and a role-specific Cosmos key file:
+
+```text
+/send 1.25 MTC myth1recipient...
+/stake 10 mythvaloper1validator...
+/unstake 2 mythvaloper1validator...
+```
+
+`/stake` and `/unstake` delegate/undelegate MTC (`umtc`) through Cosmos staking;
+undelegated funds remain locked for the chain's unbonding period. `/send` accepts
+MTC or ZYRA and transfers through Cosmos Bank. Task PoUW rewards are separate and are
+settled by Mythchain after approval when the on-chain reward pool is enabled/funded.
+
+In 2.1.67, `/link`, EVM `/claim`, `/stake`, `/unstake`, `/deploy`, Celo balance display,
+and EVM Judge stake checks are retired. Mythchain task and Judge flows use Cosmos
+identities and do not contact Celo. Existing wallet files may still contain a legacy
+MetaMask address for migration compatibility; it is ignored by active task and Judge flows.
 
 ## Miner/Judge Docker runtime and task dependencies
 
