@@ -280,6 +280,11 @@ def main(argv=None):
     p2p_node = P2PNode(port=port, tracker_url=tracker,
                        seed_peer=os.environ.get("ZYRA_SEED_PEER"))
     p2p_node.on_task_updated = state.update_from_network
+    if os.environ.get("ZYRA_MYTHCHAIN_MODE", "off").lower() == "required":
+        from zyra_cmd.zyra_cli import make_chain_admit_filter
+        admit_filter = make_chain_admit_filter()
+        if admit_filter is not None:
+            p2p_node.task_admit_filter = admit_filter
 
     loop_ready = threading.Event()
 

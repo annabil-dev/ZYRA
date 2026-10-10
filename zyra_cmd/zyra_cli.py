@@ -93,6 +93,47 @@ def get_pending_miner_task(tasks, preferred_task_id=None, miner_identity=None, n
     return None
 
 
+def make_chain_admit_filter(ttl_seconds=120):
+    """Build a P2P gossip admit filter for canonical (MYTHCHAIN_MODE=required) nodes.
+
+    Only tasks with a chain lease record are admitted into the local mempool;
+    unregistered ghosts are dropped on receipt instead of accumulating and
+    wasting miner claim cycles. Results (including negative) are cached for
+    ttl_seconds so repeated pushes don't spam the chain; a task registered
+    after first sighting is admitted on the next push. Returns None when this
+    node has no chain query config (fail-open: accept all gossip).
+    """
+    from zyra_cmd.mythchain_adapter import MythchainConfig, MythchainTaskAdapter
+    config = None
+    for role in ("miner", "client", "judge"):
+        try:
+            config = MythchainConfig.from_env(role, query_only=True)
+            break
+        except Exception:
+            continue
+    if config is None:
+        return None
+    adapter = MythchainTaskAdapter(config)
+    cache = {}
+
+    def _admitted(task_id, _payload):
+        import time as _time
+        now = _time.time()
+        hit = cache.get(task_id)
+        if hit is not None and now - hit[1] < ttl_seconds:
+            return hit[0]
+        try:
+            admitted = adapter.query_task(task_id) is not None
+        except Exception:
+            admitted = False
+        # Fail-closed here would only hide tasks until the next push; the
+        # transport-level _admitted() already fails open on filter errors.
+        cache[task_id] = (admitted, now)
+        return admitted
+
+    return _admitted
+
+
 def is_test_verification_command(command):
     """Recognize the supported unit-test commands used to clear a coder failure."""
     command = str(command).lower()
@@ -1214,6 +1255,11 @@ def main():
     p2p_port = random.randint(5001, 5999)
     p2p_node = P2PNode(port=p2p_port, tracker_url=args.tracker, seed_peer=args.seed_peer)
     p2p_node.on_task_updated = client_state.update_from_network
+    if os.environ.get("ZYRA_MYTHCHAIN_MODE", "off").lower() == "required":
+        admit_filter = make_chain_admit_filter()
+        if admit_filter is not None:
+            p2p_node.task_admit_filter = admit_filter
+            print(f"\033[94m[P2P]\033[0m Canonical gossip filter ON: only chain-registered tasks admitted.")
     client_monitor = ClientTaskMonitor(client_state, p2p_node)
     
     def run_p2p():

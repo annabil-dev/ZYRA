@@ -49,6 +49,22 @@ class P2PNode:
         
         self.on_trajectory_received = None # Callback function
         self.on_task_updated = None # Persist locally submitted task progress
+        # Optional gossip admission filter: callable(task_id, payload) -> bool.
+        # When set (canonical/Mythchain mode), tasks with no chain lease record
+        # are dropped on receipt so unregistered ghosts can never accumulate.
+        # None (default) accepts all gossip, preserving legacy P2P-only mode.
+        self.task_admit_filter = None
+
+    def _admitted(self, task_id, payload):
+        """Ask the admit filter whether an UNKNOWN task may enter the mempool."""
+        admit = getattr(self, "task_admit_filter", None)
+        if admit is None:
+            return True
+        try:
+            return bool(admit(task_id, payload))
+        except Exception as exc:
+            logging.warning(f"Task admit filter failed open for {task_id}: {exc}")
+            return True
         
     async def start(self):
         self.loop = asyncio.get_running_loop()
@@ -226,6 +242,9 @@ class P2PNode:
             if task_id not in self.tasks:
                 if payload.get("status") == "completed":
                     return
+                if not self._admitted(task_id, payload):
+                    logging.info(f"Dropped unregistered task gossip: {task_id}")
+                    return
                 logging.info(f"Received NEW_TASK: {task_id}")
                 task_data = dict(payload)
                 task_data.pop("acceptance_score_report", None)
@@ -279,6 +298,9 @@ class P2PNode:
                     self._notify_task_updated(self.tasks[task_id])
                     await self.broadcast(create_message(MessageType.TASK_UPDATED, self.tasks[task_id]), exclude=websocket)
             else:
+                if not self._admitted(task_id, payload):
+                    logging.info(f"Dropped unregistered task update: {task_id}")
+                    return
                 self.tasks[task_id] = payload
                 self._notify_task_updated(self.tasks[task_id])
                 await self.broadcast(raw_msg_str, exclude=websocket)
@@ -336,6 +358,8 @@ class P2PNode:
             logging.info("Received MEMPOOL_DATA sync")
             for task_id, task_data in payload.get("tasks", {}).items():
                 if not isinstance(task_data, dict):
+                    continue
+                if task_id not in self.tasks and not self._admitted(task_id, task_data):
                     continue
                 if task_id in self.tasks and self.tasks[task_id].get("status") == "completed":
                     continue

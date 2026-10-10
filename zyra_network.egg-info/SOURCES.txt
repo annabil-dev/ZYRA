@@ -86,6 +86,7 @@ tests/test_mythchain_release_reclaim_e2e.py
 tests/test_mythchain_wallet_e2e.py
 tests/test_mythchain_wallet_transactions.py
 tests/test_overfit_tiny_dataset.py
+tests/test_p2p_admit_filter.py
 tests/test_paths.py
 tests/test_pretraining_safety.py
 tests/test_rms_norm.py
