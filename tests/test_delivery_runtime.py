@@ -58,6 +58,28 @@ def test_client_contract_cannot_be_weakened_in_manifest(tmp_path):
         validate_deliverables(tmp_path, contract)
 
 
+def test_validator_reports_all_issues_in_one_round(tmp_path):
+    # Regression test for the planner loop burning one swarm cycle per
+    # missing manifest field: all deliverable issues must be reported at once.
+    contract = make_contract("print hi")
+    (tmp_path / contract["entrypoint"]).write_text("print('hi')\n")
+    (tmp_path / "test_suite.py").write_text("x\n")
+    (tmp_path / "requirements.txt").write_text("# none\n")
+    (tmp_path / "README.md").write_text("hello\n")
+    (tmp_path / "zyra.json").write_text(json.dumps({
+        "runtime": contract["runtime"],
+        "profile": contract["profile"],
+        "entrypoint": contract["entrypoint"],
+    }))
+    with pytest.raises(ValueError) as excinfo:
+        validate_deliverables(tmp_path, contract)
+    message = str(excinfo.value)
+    assert "acceptance_hash" in message
+    assert "run_command" in message
+    assert "## Setup" in message
+    assert "must describe each deliverable" in message
+
+
 def test_readme_and_each_file_must_be_documented(tmp_path):
     contract = make_web_workspace(tmp_path)
     (tmp_path / "extra.py").write_text("print('extra')")
@@ -545,7 +567,9 @@ def test_delivery_rejection_is_sent_to_coder_and_inspect_only_step_is_rejected(t
                                    planner_model="planner", coder_model="coder", task_id="job")
 
     assert result is False
-    assert planner_calls == 15
+    # Same validator rejection 3x in a row aborts early instead of burning
+    # all 15 cycles (stuck-loop guard).
+    assert planner_calls == 5
     assert any(any("acceptance_hash does not match" in message.get("content", "")
                    for message in history if message.get("role") == "user")
                for history in coder_history)

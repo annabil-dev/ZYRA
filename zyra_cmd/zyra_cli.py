@@ -446,6 +446,12 @@ print("hello")
     successful_delegations = 0
     pending_delivery_feedback = None
     feedback_change_made = False
+    # Rolling progress memory: survives history truncation so the planner does
+    # not redo completed fixes (planner amnesia), and stuck-loop detection.
+    cycle_summaries = []
+    last_rejection_reason = None
+    same_rejection_count = 0
+    max_same_rejection = 3
     for cycle in range(max_swarm_cycles):
         print(f"\033[94m=== Swarm Cycle {cycle+1}/{max_swarm_cycles} ===\033[0m")
         audit_event("cycle_started", cycle=cycle + 1, max_cycles=max_swarm_cycles)
@@ -453,6 +459,14 @@ print("hello")
         # Prevent Context Overflow for Planner (Keep System Prompt + last 9 messages)
         if len(planner_history) > 10:
             planner_history = [planner_history[0]] + planner_history[-9:]
+        # Re-inject compact progress memory every cycle: truncation above drops
+        # middle history, without this the planner redoes finished fixes.
+        if cycle_summaries:
+            recent = cycle_summaries[-6:]
+            planner_history.append({"role": "user", "content": (
+                "PROGRESS SO FAR — these items are DONE, do not redo them, build on them:\n" +
+                "\n".join(f"- {entry}" for entry in recent)
+            )})
             
         # --- SANDBOX SETUP ---
         t_id = task_id if task_id else "local_task"
@@ -503,10 +517,22 @@ print("hello")
             feedback = str(validation_report)[-6000:]
             pending_delivery_feedback = feedback
             feedback_change_made = False
+            rejection_reason = str(validation_report.get("reason", ""))[:300]
+            cycle_summaries.append(f"Cycle {cycle+1}: delivery rejected — {rejection_reason}")
+            if rejection_reason and rejection_reason == last_rejection_reason:
+                same_rejection_count += 1
+            else:
+                same_rejection_count = 1
+            last_rejection_reason = rejection_reason
+            if same_rejection_count >= max_same_rejection:
+                print(f"[Runtime] Same rejection {same_rejection_count}x in a row with no progress. "
+                      f"Stopping instead of burning cycles.\n")
+                audit_event("stuck_loop_abort", cycle=cycle + 1, reason=rejection_reason)
+                return False
             audit_event("delivery_rejected", cycle=cycle + 1, report=validation_report)
             planner_history.append({"role": "user", "content": (
-                "DELIVERY REJECTED by the independent pre-delivery validator. Fix the concrete reported issue "
-                "before claiming completion. Inspect the named file(s), then either remove unintended temporary/debug "
+                "DELIVERY REJECTED by the independent pre-delivery validator. Fix ALL reported issues "
+                "below in a SINGLE round before claiming completion. Inspect the named file(s), then either remove unintended temporary/debug "
                 "files or document every retained deliverable in BOTH README.md and zyra.json. If startup or a test "
                 "failed, reproduce and fix that exact failure; do not weaken the client acceptance contract. "
                 "Delegate the fix to the Coder and require it to run a relevant verification command.\n"
@@ -692,6 +718,7 @@ print("hello")
                     if len(action_summary) > 2000: action_summary = action_summary[-2000:]
                     print(f"\033[93m[Coder Agent]\033[0m Step reported as complete.\n")
                     planner_history.append({"role": "user", "content": f"CODER REPORT: Step completed successfully.\nExecution Log:\n{action_summary}"})
+                    cycle_summaries.append(f"Cycle {cycle+1}: coder completed delegated step.")
                     step_completed = True
                     successful_delegations += 1
                     break

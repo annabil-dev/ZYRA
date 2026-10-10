@@ -205,54 +205,99 @@ def deliverable_files(root):
 def validate_deliverables(root, contract):
     root = Path(root)
     contract = validate_contract(contract)
+    # Collect every issue in one pass instead of failing on the first one, so
+    # the planner can fix the whole manifest in a single round (one rejection
+    # per cycle otherwise burns a full swarm cycle per missing field).
+    issues = []
     for name in ("README.md", "requirements.txt", "zyra.json", "test_suite.py", contract["entrypoint"]):
         if not (root / name).is_file():
-            raise ValueError(f"Missing required deliverable: {name}")
-    manifest = json.loads((root / "zyra.json").read_text(encoding="utf-8"))
-    for key in ("runtime", "profile", "entrypoint"):
-        if manifest.get(key) != contract[key]:
-            raise ValueError(f"zyra.json {key} does not match the client's contract")
-    if manifest.get("acceptance_hash") != contract_hash(contract):
-        raise ValueError("zyra.json acceptance_hash does not match the client's contract")
-    expected_command = startup_command(contract)
-    if manifest.get("run_command") != expected_command:
-        raise ValueError(f"Document run_command as: {expected_command}")
-    files = manifest.get("files")
-    if not isinstance(files, dict):
-        raise ValueError("zyra.json must describe each deliverable in files")
-    readme = (root / "README.md").read_text(encoding="utf-8")
+            issues.append(f"Missing required deliverable: {name}")
+    manifest = None
+    if (root / "zyra.json").is_file():
+        try:
+            manifest = json.loads((root / "zyra.json").read_text(encoding="utf-8"))
+        except (ValueError, OSError) as exc:
+            issues.append(f"zyra.json is not valid JSON: {exc}")
+    if isinstance(manifest, dict):
+        for key in ("runtime", "profile", "entrypoint"):
+            if manifest.get(key) != contract[key]:
+                issues.append(f"zyra.json {key} does not match the client's contract")
+        if manifest.get("acceptance_hash") != contract_hash(contract):
+            issues.append("zyra.json acceptance_hash does not match the client's contract")
+        expected_command = startup_command(contract)
+        if manifest.get("run_command") != expected_command:
+            issues.append(f"Document run_command as: {expected_command}")
+        files = manifest.get("files")
+        if not isinstance(files, dict):
+            issues.append("zyra.json must describe each deliverable in files")
+            files = None
+    else:
+        if manifest is not None:
+            issues.append("zyra.json must be a JSON object")
+        files = None
+    readme = ""
+    if (root / "README.md").is_file():
+        try:
+            readme = (root / "README.md").read_text(encoding="utf-8")
+        except OSError as exc:
+            issues.append(f"README.md is not readable: {exc}")
     for heading in ("Setup", "Run", "Test", "Files", "Limitations"):
         if not re.search(r"^##\s+" + heading + r"\s*$", readme, re.M | re.I):
-            raise ValueError(f"README.md needs a '## {heading}' section")
-    if expected_command not in readme or "python -m unittest discover" not in readme:
-        raise ValueError("README.md must contain the actual run and test commands")
-    for name in deliverable_files(root):
+            issues.append(f"README.md needs a '## {heading}' section")
+    try:
+        expected_command = startup_command(contract)
+    except Exception:
+        expected_command = ""
+    if expected_command and (expected_command not in readme or "python -m unittest discover" not in readme):
+        issues.append("README.md must contain the actual run and test commands")
+    workspace_files = []
+    if files is not None:
+        try:
+            workspace_files = list(deliverable_files(root))
+        except ValueError as exc:
+            issues.append(str(exc))
+    for name in workspace_files:
         if not isinstance(files.get(name), str) or not files[name].strip() or name not in readme:
-            raise ValueError(f"Document the purpose of {name} in zyra.json and README.md")
-    for name in files:
-        relative_path(name)
-        if not (root / name).is_file():
-            raise ValueError(f"zyra.json describes a missing file: {name}")
+            issues.append(f"Document the purpose of {name} in zyra.json and README.md")
+    if files is not None:
+        for name in files:
+            try:
+                relative_path(name)
+            except Exception as exc:
+                issues.append(f"zyra.json has an invalid file path {name!r}: {exc}")
+                continue
+            if not (root / name).is_file():
+                issues.append(f"zyra.json describes a missing file: {name}")
     # Task dependencies are prepared in a separate builder from exact binary-wheel pins.
     # The app/test containers themselves remain offline.
     requirement_pattern = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*==[A-Za-z0-9][A-Za-z0-9.!+_-]*\Z")
-    requirements_text = (root / "requirements.txt").read_text(encoding="utf-8")
+    try:
+        requirements_text = (root / "requirements.txt").read_text(encoding="utf-8")
+    except OSError as exc:
+        requirements_text = ""
+        if not any("Missing required deliverable: requirements.txt" in issue for issue in issues):
+            issues.append(f"requirements.txt is not readable: {exc}")
     if len(requirements_text.encode("utf-8")) > 32 * 1024:
-        raise ValueError("requirements.txt exceeds the 32 KiB runtime limit")
+        issues.append("requirements.txt exceeds the 32 KiB runtime limit")
     dependencies = set()
     for line_number, raw_line in enumerate(requirements_text.splitlines(), start=1):
         requirement = raw_line.split("#", 1)[0].strip()
         if requirement:
             if not requirement_pattern.fullmatch(requirement) or "*" in requirement:
-                raise ValueError(
+                issues.append(
                     "requirements.txt must use exact package==version pins supported by the isolated "
                     f"wheel builder (line {line_number})"
                 )
-            dependencies.add(requirement.lower())
-            if len(dependencies) > 64:
-                raise ValueError("requirements.txt exceeds the 64 dependency runtime limit")
+            else:
+                dependencies.add(requirement.lower())
+                if len(dependencies) > 64:
+                    issues.append("requirements.txt exceeds the 64 dependency runtime limit")
     if contract["profile"] == "flask-web" and "flask==3.1.3" not in dependencies:
-        raise ValueError("Web deliverables must declare Flask==3.1.3")
+        issues.append("Web deliverables must declare Flask==3.1.3")
+    if issues:
+        raise ValueError(
+            f"{len(issues)} deliverable issue(s) must be fixed in one round:\n- " + "\n- ".join(issues)
+        )
     return manifest
 
 
