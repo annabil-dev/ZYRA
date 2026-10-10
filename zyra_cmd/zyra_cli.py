@@ -1796,7 +1796,7 @@ os.system("start cmd /k zyra")
                                         task_id, found_task.get("acceptance_hash", ""),
                                         criteria=(found_task.get("acceptance") or {}).get("criteria"))
                                 except Exception as exc:
-                                    set_miner_status(f"[Mythchain] Claim unavailable; retrying: {exc}")
+                                    set_miner_status(f"[Mythchain] Claim unavailable for {task_id}; retrying: {exc}")
                                     canonical_retry_after[task_id] = time.monotonic() + 30
                                     time.sleep(5)
                                     continue
